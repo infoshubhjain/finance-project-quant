@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
-from alpha_engine.cache.models import CacheKey, MacroObservation, PriceSeries
+from alpha_engine.cache.models import MacroObservation, PriceSeries
 
 # TTL budget per data kind. Tune as you learn each source's update cadence.
 TTL: dict[str, timedelta] = {
