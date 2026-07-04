@@ -7,9 +7,11 @@ Run:
     python -m alpha_engine.cli.main scan BTC          # crypto, no key needed
     python -m alpha_engine.cli.main scan AAPL         # US equity, no key needed
     python -m alpha_engine.cli.main backtest BTC --days 365
+    python -m alpha_engine.cli.main watch BTC AAPL NIFTY
     python -m alpha_engine.cli.main record-stats
 
-Market is auto-detected (mapped crypto symbols -> crypto; anything else -> US
+Market is auto-detected (mapped crypto symbols -> crypto; Indian index symbols
+-> F&O; `.NS` / `.BO` suffixes -> Indian equities; everything else -> US
 equity) and can be forced with --market. Equity scans blend the trend read with
 a macro-context tilt when FRED data is available; with no FRED_API_KEY they
 degrade gracefully to trend-only. No command ever requires a key.
@@ -20,27 +22,44 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from pathlib import Path
 
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
 from alpha_engine.analyzers.equity_trend import analyze_equity_trend
+from alpha_engine.analyzers.fno_oi import analyze_fno, oi_support_resistance
 from alpha_engine.analyzers.macro_context import analyze_macro
 from alpha_engine.cache.interface import Cache
-from alpha_engine.cache.models import MacroObservation, PriceSeries
+from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
+from alpha_engine.ingestion.breeze import BreezeLiveClient
 from alpha_engine.ingestion import coingecko, fred, yahoo
+from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
+from alpha_engine.ingestion.indian_fno import load_indian_chain
 from alpha_engine.narrative.narrator import write_thesis
-from alpha_engine.schema.signal import Market, SignalSource, Timeframe
+from alpha_engine.schema.signal import Market, Signal, SignalSource, Timeframe
 from alpha_engine.synthesis.synthesize import synthesize
 from alpha_engine.validation.backtest import run_backtest
 from alpha_engine.validation.outcomes import score_record, summarize_outcomes
 from alpha_engine.validation.recorder import read_records, record_signal
 
 
+# Indian index symbols that route to the F&O path. Extend as chains land.
+_IN_FNO_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"}
+_IN_EQUITY_SUFFIXES = (".NS", ".BO")
+
+
 def detect_market(asset: str, override: str | None = None) -> Market:
-    """Mapped crypto symbols are crypto; everything else is a US equity ticker.
-    Explicit --market always wins over detection."""
+    """Mapped crypto symbols are crypto, known Indian indexes are F&O, and
+    everything else is a US equity ticker. Explicit --market always wins."""
     if override:
         return Market(override)
-    return Market.CRYPTO if coingecko.supports(asset) else Market.US_EQUITY
+    asset = asset.upper()
+    if coingecko.supports(asset):
+        return Market.CRYPTO
+    if asset in _IN_FNO_SYMBOLS:
+        return Market.IN_FNO
+    if asset.endswith(_IN_EQUITY_SUFFIXES):
+        return Market.IN_EQUITY
+    return Market.US_EQUITY
 
 
 def _load_series(
@@ -86,10 +105,127 @@ def _load_macro(cache: Cache, no_refresh: bool) -> dict[str, list[MacroObservati
     return data
 
 
+def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace) -> int:
+    """The Indian F&O path reads an options chain, not a price series, so it has
+    its own flow. No broker adapter is wired yet: the chain must already be in
+    the cache (dropped there by hand or by a future Breeze/Angel One adapter).
+    Missing data degrades to a clear message, never a crash."""
+    chain, stale = cache.get_chain(asset)
+    if chain is None:
+        print(
+            f"[error] no options chain cached for {asset}. Indian F&O needs broker "
+            f"data (Breeze / Angel One adapter not yet wired). To run the analytics "
+            f"today, drop a normalized OptionsChain JSON at data/cache/chain/{asset}.json "
+            f"(see cache/models.py for the shape).",
+            file=sys.stderr,
+        )
+        return 1
+    return _scan_fno_chain(asset, chain, stale, cache, args)
+
+
+def _scan_fno_chain(asset: str, chain: OptionsChain, stale: bool, cache: Cache, args: argparse.Namespace) -> int:
+    """Run the deterministic F&O pipeline on a normalized chain."""
+    if stale:
+        print(
+            f"[cache] warning: {asset} chain is stale (fetched {chain.fetched_at}); "
+            f"OI reads age quickly",
+            file=sys.stderr,
+        )
+
+    signal = _build_fno_signal(asset, chain)
+
+    if not args.no_record:
+        record = record_signal(signal, entry_price=chain.spot)
+        print(f"[record] appended {record.record_id} to data/signals/", file=sys.stderr)
+
+    print(signal.model_dump_json(indent=2))
+    return 0
+
+
+def _fetch_fno_chain(
+    asset: str,
+    expiry_date: str,
+    cache: Cache,
+    args: argparse.Namespace,
+) -> int:
+    """Fetch a live Indian options chain and immediately run the deterministic
+    F&O analyzer on it.
+
+    Breeze is the easiest free path today because it exposes a full chain in one
+    call. The fetch is deliberately gated behind env credentials so the default
+    repo still stays keyless.
+    """
+    try:
+        client = BreezeLiveClient.from_env()
+        chain = client.fetch_chain(asset, expiry_date)
+    except BrokerNotConfiguredError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 1
+    except Exception as e:  # noqa: BLE001 - surface live broker issues clearly
+        print(f"[error] Breeze fetch failed: {e}", file=sys.stderr)
+        return 1
+
+    cache.put_chain(chain)
+    print(
+        f"[cache] saved {asset} options chain for {expiry_date} to data/cache/chain/",
+        file=sys.stderr,
+    )
+    return _scan_fno_chain(asset, chain, False, cache, args)
+
+
+def _build_fno_signal(asset: str, chain: OptionsChain) -> Signal:
+    """Build the deterministic F&O signal for one chain."""
+    source = analyze_fno(chain)
+    signal = synthesize(
+        asset=asset,
+        market=Market.IN_FNO,
+        sources=[source],
+        timeframe=Timeframe.SWING,
+    )
+    invalidation = oi_support_resistance(chain, signal.direction)
+    signal = signal.model_copy(update={"invalidation_level": invalidation})
+    signal = write_thesis(signal)
+    return signal
+
+
+def _load_chain_file(path: str | Path, underlying: str | None = None) -> OptionsChain:
+    """Load a normalized options-chain fixture from disk."""
+    return load_indian_chain(path, underlying=underlying)
+
+
+def cmd_scan_chain(args: argparse.Namespace) -> int:
+    """Analyze a normalized options-chain fixture from disk.
+
+    This is the offline Phase 3 entry point: no broker credentials, no network,
+    just the deterministic PCR / max-pain / OI-shift math against a fixture.
+    The loaded chain is also written to the local cache so `scan NIFTY` can
+    reuse the same normalized payload afterward.
+    """
+    cache = Cache()
+    try:
+        chain = _load_chain_file(args.chain_file, underlying=getattr(args, "underlying", None))
+    except Exception as e:  # noqa: BLE001 - fixture loading should fail loudly
+        print(f"[error] failed to load chain fixture: {e}", file=sys.stderr)
+        return 1
+
+    cache.put_chain(chain)
+    return _scan_fno_chain(chain.underlying, chain, False, cache, args)
+
+
+def cmd_fetch_chain(args: argparse.Namespace) -> int:
+    """Fetch a live Indian options chain from Breeze and analyze it."""
+    cache = Cache()
+    asset = args.asset.upper()
+    return _fetch_fno_chain(asset, args.expiry, cache, args)
+
+
 def cmd_scan(args: argparse.Namespace) -> int:
     cache = Cache()
     asset = args.asset.upper()
     market = detect_market(asset, args.market)
+
+    if market is Market.IN_FNO:
+        return _scan_fno(asset, cache, args)
 
     try:
         series = _load_series(asset, market, args.days, args.no_refresh, cache)
@@ -97,26 +233,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"[error] fetch failed: {e}", file=sys.stderr)
         return 1
 
-    sources: list[SignalSource] = []
-    if market is Market.CRYPTO:
-        sources.append(analyze_trend(series))
-    else:
-        sources.append(analyze_equity_trend(series))
-        macro_data = _load_macro(cache, args.no_refresh)
-        if macro_data:
-            sources.append(analyze_macro(macro_data))
-
-    signal = synthesize(
-        asset=asset,
-        market=market,
-        sources=sources,
-        timeframe=Timeframe.SWING,
-    )
-    # Invalidation is computed from the synthesized direction so the level always
-    # matches the view the signal actually expresses.
-    invalidation = trend_invalidation(series.candles, signal.direction)
-    signal = signal.model_copy(update={"invalidation_level": invalidation})
-    signal = write_thesis(signal)
+    signal = _build_price_signal(asset, market, series, cache, args.no_refresh)
 
     if not args.no_record:
         entry = series.candles[-1].close if series.candles else None
@@ -127,10 +244,44 @@ def cmd_scan(args: argparse.Namespace) -> int:
     return 0
 
 
+def _build_price_signal(
+    asset: str, market: Market, series: PriceSeries, cache: Cache, no_refresh: bool
+) -> Signal:
+    """Build the deterministic price-series signal for crypto or equities."""
+    sources: list[SignalSource] = []
+    if market is Market.CRYPTO:
+        sources.append(analyze_trend(series))
+    else:
+        sources.append(analyze_equity_trend(series))
+        macro_data = _load_macro(cache, no_refresh)
+        if macro_data:
+            sources.append(analyze_macro(macro_data))
+
+    signal = synthesize(
+        asset=asset,
+        market=market,
+        sources=sources,
+        timeframe=Timeframe.SWING,
+    )
+    invalidation = trend_invalidation(series.candles, signal.direction)
+    signal = signal.model_copy(update={"invalidation_level": invalidation})
+    signal = write_thesis(signal)
+    return signal
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     cache = Cache()
     asset = args.asset.upper()
     market = detect_market(asset, args.market)
+
+    if market is Market.IN_FNO:
+        print(
+            "[error] F&O backtesting needs a history of options chains, which no "
+            "free source provides yet. Price-series backtests cover crypto and "
+            "US equities.",
+            file=sys.stderr,
+        )
+        return 1
 
     try:
         series = _load_series(asset, market, args.days, args.no_refresh, cache)
@@ -140,6 +291,101 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
     report = run_backtest(series, market=market, step=args.step)
     print(report.model_dump_json(indent=2))
+    return 0
+
+
+def _format_table(rows: list[dict[str, str]]) -> str:
+    headers = ["asset", "market", "direction", "confidence", "status", "note"]
+    widths = {h: len(h) for h in headers}
+    for row in rows:
+        for h in headers:
+            widths[h] = max(widths[h], len(row[h]))
+
+    def fmt(values: dict[str, str]) -> str:
+        return "  ".join(values[h].ljust(widths[h]) for h in headers)
+
+    lines = [fmt({h: h for h in headers})]
+    lines.append("  ".join("-" * widths[h] for h in headers))
+    for row in rows:
+        lines.append(fmt(row))
+    return "\n".join(lines)
+
+
+def cmd_watch(args: argparse.Namespace) -> int:
+    """Scan a batch of assets and print a compact table.
+
+    This is a CLI convenience layer on top of the same deterministic analyzers
+    used by `scan`; it is intentionally read-friendly, not a trading surface.
+    """
+    cache = Cache()
+    rows: list[dict[str, str]] = []
+
+    for raw_asset in args.assets:
+        asset = raw_asset.upper()
+        market = detect_market(asset, args.market)
+        try:
+            if market is Market.IN_FNO:
+                chain, stale = cache.get_chain(asset)
+                if chain is None:
+                    raise FileNotFoundError(
+                        f"no cached chain for {asset}; run scan-chain first or drop a JSON file"
+                    )
+                signal = _build_fno_signal(asset, chain)
+                status = "stale" if stale else "ok"
+                if args.record:
+                    record = record_signal(signal, entry_price=chain.spot)
+                    print(
+                        f"[record] appended {record.record_id} for {asset} to data/signals/",
+                        file=sys.stderr,
+                    )
+            else:
+                series = _load_series(asset, market, args.days, args.no_refresh, cache)
+                signal = _build_price_signal(asset, market, series, cache, args.no_refresh)
+                status = "stale" if cache.get_price(asset, "1d")[1] else "ok"
+                if args.record:
+                    entry = series.candles[-1].close if series.candles else None
+                    record = record_signal(signal, entry_price=entry)
+                    print(
+                        f"[record] appended {record.record_id} for {asset} to data/signals/",
+                        file=sys.stderr,
+                    )
+        except Exception as e:  # noqa: BLE001 - batch view should keep going
+            rows.append(
+                {
+                    "asset": asset,
+                    "market": market.value,
+                    "direction": "error",
+                    "confidence": "-",
+                    "status": str(e),
+                    "note": "",
+                }
+            )
+            continue
+
+        note = signal.signal_sources[0].detail[:80] if signal.signal_sources else ""
+
+        rows.append(
+            {
+                "asset": asset,
+                "market": market.value,
+                "direction": signal.direction.value,
+                "confidence": f"{signal.confidence:.2f}",
+                "status": status,
+                "note": note,
+            }
+        )
+
+    sort = getattr(args, "sort", None)
+    if sort:
+        if sort == "confidence":
+            rows.sort(
+                key=lambda row: float(row["confidence"]) if row["confidence"] != "-" else -1.0,
+                reverse=True,
+            )
+        else:
+            rows.sort(key=lambda row: row[sort])
+
+    print(_format_table(rows))
     return 0
 
 
@@ -169,10 +415,10 @@ def cmd_record_stats(args: argparse.Namespace) -> int:
 
 
 def _add_market_args(sub: argparse.ArgumentParser, default_days: int) -> None:
-    sub.add_argument("asset", help="symbol, e.g. BTC, ETH, AAPL, MSFT")
+    sub.add_argument("asset", help="symbol, e.g. BTC, ETH, AAPL, NIFTY")
     sub.add_argument(
         "--market",
-        choices=[Market.CRYPTO.value, Market.US_EQUITY.value],
+        choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_FNO.value],
         default=None,
         help="force the market instead of auto-detecting",
     )
@@ -188,6 +434,49 @@ def build_parser() -> argparse.ArgumentParser:
     _add_market_args(scan, default_days=90)
     scan.add_argument("--no-record", action="store_true", help="do not append to the signal log")
     scan.set_defaults(func=cmd_scan)
+
+    scan_chain = sub.add_parser(
+        "scan-chain",
+        help="generate an F&O signal from a normalized OptionsChain JSON fixture",
+    )
+    scan_chain.add_argument("chain_file", help="path to a normalized OptionsChain JSON file")
+    scan_chain.add_argument(
+        "--underlying",
+        default=None,
+        help="override the underlying symbol when the raw payload omits it",
+    )
+    scan_chain.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    scan_chain.set_defaults(func=cmd_scan_chain)
+
+    fetch_chain = sub.add_parser(
+        "fetch-chain",
+        help="fetch a live Indian options chain from Breeze and analyze it",
+    )
+    fetch_chain.add_argument("asset", help="underlying symbol, e.g. NIFTY")
+    fetch_chain.add_argument(
+        "--expiry",
+        required=True,
+        help="expiry date to fetch, in YYYY-MM-DD format",
+    )
+    fetch_chain.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    fetch_chain.set_defaults(func=cmd_fetch_chain)
+
+    watch = sub.add_parser(
+        "watch",
+        help="scan multiple assets and print a compact table",
+    )
+    watch.add_argument("assets", nargs="+", help="symbols to scan, e.g. BTC AAPL NIFTY")
+    watch.add_argument("--market", choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_FNO.value], default=None, help="force one market for every asset")
+    watch.add_argument("--days", type=int, default=90, help="history window to fetch")
+    watch.add_argument("--no-refresh", action="store_true", help="use cache even if stale")
+    watch.add_argument("--record", action="store_true", help="append results to the signal log")
+    watch.add_argument(
+        "--sort",
+        choices=["asset", "market", "confidence"],
+        default=None,
+        help="sort the batch output before printing",
+    )
+    watch.set_defaults(func=cmd_watch)
 
     bt = sub.add_parser("backtest", help="replay history through the analyzer, no lookahead")
     _add_market_args(bt, default_days=365)

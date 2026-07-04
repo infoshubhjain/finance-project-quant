@@ -18,7 +18,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
 
-from alpha_engine.cache.models import MacroObservation, PriceSeries
+from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
 
 # TTL budget per data kind. Tune as you learn each source's update cadence.
 TTL: dict[str, timedelta] = {
@@ -26,6 +26,7 @@ TTL: dict[str, timedelta] = {
     "price:1h": timedelta(hours=1),
     "price:1d": timedelta(hours=12),
     "macro": timedelta(days=1),
+    "chain": timedelta(minutes=15),  # OI moves intraday; chains rot fast
 }
 
 
@@ -46,6 +47,8 @@ class Store(Protocol):
     def read_price(self, asset: str, interval: str) -> PriceSeries | None: ...
     def write_macro(self, obs: list[MacroObservation]) -> None: ...
     def read_macro(self, series_id: str) -> list[MacroObservation]: ...
+    def write_chain(self, chain: OptionsChain) -> None: ...
+    def read_chain(self, underlying: str) -> OptionsChain | None: ...
 
 
 class LocalStore:
@@ -57,12 +60,16 @@ class LocalStore:
         self.root = Path(root)
         (self.root / "price").mkdir(parents=True, exist_ok=True)
         (self.root / "macro").mkdir(parents=True, exist_ok=True)
+        (self.root / "chain").mkdir(parents=True, exist_ok=True)
 
     def _price_path(self, asset: str, interval: str) -> Path:
         return self.root / "price" / f"{asset.upper()}_{interval}.json"
 
     def _macro_path(self, series_id: str) -> Path:
         return self.root / "macro" / f"{series_id}.json"
+
+    def _chain_path(self, underlying: str) -> Path:
+        return self.root / "chain" / f"{underlying.upper()}.json"
 
     def write_price(self, series: PriceSeries) -> None:
         p = self._price_path(series.asset, series.interval.value)
@@ -89,6 +96,16 @@ class LocalStore:
         raw = json.loads(p.read_text())
         return [MacroObservation.model_validate(r) for r in raw]
 
+    def write_chain(self, chain: OptionsChain) -> None:
+        p = self._chain_path(chain.underlying)
+        p.write_text(chain.model_dump_json(indent=2))
+
+    def read_chain(self, underlying: str) -> OptionsChain | None:
+        p = self._chain_path(underlying)
+        if not p.exists():
+            return None
+        return OptionsChain.model_validate_json(p.read_text())
+
 
 class Cache:
     """The public read interface. Analyzers get one of these and ask it for data.
@@ -112,8 +129,19 @@ class Cache:
         newest = max(o.ts for o in obs)
         return obs, is_stale(newest, "macro")
 
+    def get_chain(self, underlying: str) -> tuple[OptionsChain | None, bool]:
+        """Returns (chain, stale). Same contract as get_price: None means
+        nothing cached; stale=True means it exists but exceeded its TTL."""
+        chain = self.store.read_chain(underlying)
+        if chain is None:
+            return None, True
+        return chain, is_stale(chain.fetched_at, "chain")
+
     def put_price(self, series: PriceSeries) -> None:
         self.store.write_price(series)
 
     def put_macro(self, obs: list[MacroObservation]) -> None:
         self.store.write_macro(obs)
+
+    def put_chain(self, chain: OptionsChain) -> None:
+        self.store.write_chain(chain)

@@ -46,6 +46,47 @@ class PriceSeries(BaseModel):
         return [c.close for c in self.candles]
 
 
+class OptionRight(str, Enum):
+    """Whether an option is a call (right to buy) or a put (right to sell)."""
+
+    CALL = "call"
+    PUT = "put"
+
+
+class OptionQuote(BaseModel):
+    """One row of an options chain: a single strike + right for one expiry.
+    `oi` (open interest) is the number of contracts currently open there — the
+    footprint of where market participants have positioned. `oi_change` is the
+    day-over-day shift when the source provides it; None means unknown, which
+    analyzers must treat differently from zero."""
+
+    strike: float
+    right: OptionRight
+    oi: float = Field(..., ge=0.0, description="open interest, in contracts")
+    oi_change: float | None = None
+    volume: float | None = None
+    last_price: float | None = None
+
+
+class OptionsChain(BaseModel):
+    """A full options chain for one underlying and one expiry, normalized. This
+    is the input for the F&O analyzers (PCR, max pain, OI structure). Whatever
+    broker it came from (Breeze, Angel One, a hand-dropped JSON), it lands in
+    this one shape."""
+
+    underlying: str  # e.g. 'NIFTY'
+    expiry: datetime
+    spot: float | None = Field(None, description="underlying price when fetched")
+    quotes: list[OptionQuote] = Field(default_factory=list)
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def calls(self) -> list[OptionQuote]:
+        return [q for q in self.quotes if q.right is OptionRight.CALL]
+
+    def puts(self) -> list[OptionQuote]:
+        return [q for q in self.quotes if q.right is OptionRight.PUT]
+
+
 class MacroObservation(BaseModel):
     """A single value of a macro series at a date, e.g. US CPI for a month.
     Normalized from FRED, World Bank, RBI, etc."""

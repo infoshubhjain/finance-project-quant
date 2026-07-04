@@ -32,9 +32,26 @@ git clone <your-repo-url> alpha-engine
 cd alpha-engine
 pip install -e ".[dev]"
 
+# Optional: copy `.env.example` to `.env` and fill in your own values.
+# The app auto-loads `.env` if present, so you can keep your shell clean.
+
 # Generate a signal. No API key needed. Crypto and US equities both work keyless.
 python -m alpha_engine.cli.main scan BTC
 python -m alpha_engine.cli.main scan AAPL
+
+# Analyze a normalized Indian F&O chain fixture or a raw broker-export JSON,
+# without any broker credentials.
+python -m alpha_engine.cli.main scan-chain data/cache/chain/NIFTY.json
+python -m alpha_engine.cli.main scan-chain raw_chain.json --underlying NIFTY
+
+# Fetch a live Breeze chain from a test account and analyze it.
+python -m alpha_engine.cli.main fetch-chain NIFTY --expiry 2026-07-30
+
+# Print a compact table for a batch of assets.
+python -m alpha_engine.cli.main watch BTC AAPL NIFTY --sort confidence
+
+# Open the read-only dashboard.
+python -m web.server
 
 # Replay history through the analyzer (no lookahead) and see the honest hit rate.
 python -m alpha_engine.cli.main backtest BTC --days 365
@@ -45,6 +62,10 @@ python -m alpha_engine.cli.main record-stats
 
 You should see a JSON `Signal` printed, with a direction, a calibrated confidence,
 the contributing inputs, an invalidation level, and a plain-language thesis.
+
+All optional integrations read from environment variables. If you prefer, put
+your values in `.env` instead of exporting them one by one; the app will load
+it automatically.
 
 Run the tests to confirm the deterministic core behaves:
 
@@ -62,8 +83,15 @@ add free keys or broker accounts. Nothing here requires payment.
 | Crypto            | CoinGecko (works now)   | —                        | —                     |
 | US equities       | Yahoo (works now)       | —                        | —                     |
 | US macro context  | —                       | FRED (works now)         | —                     |
-| Indian equities   | planned                 | —                        | Angel One / Breeze    |
-| Indian F&O / OI   | planned                 | —                        | Breeze / Dhan         |
+| Indian equities   | Yahoo via `.NS` / `.BO` | —                        | Angel One / Breeze    |
+| Indian F&O / OI   | analytics ready*        | `scan-chain` raw/fixture flow | Breeze / Dhan    |
+
+\* The F&O analytics (PCR, max pain, OI walls) are built and tested;
+`scan NIFTY` runs them on any normalized chain in the cache, `scan-chain`
+can normalize a raw broker-export JSON first, and `fetch-chain` can pull a live
+chain from a Breeze test account before analyzing it. `watch` gives you a
+compact batch view across multiple assets, and `python -m web.server` exposes a
+read-only dashboard over the same recorded signal log.
 
 The LLM narrator is also optional. With no model key, a deterministic template
 writes the thesis. A configured model only upgrades the phrasing.
@@ -107,12 +135,16 @@ one simple analyzer. A few things are deliberately honest about their limits:
    recorded signals against realized outcomes. This is the trust engine.
 2. ~~US equities + macro context~~ **done**: `scan AAPL` works keyless via
    Yahoo, and a free FRED key adds a macro-posture tilt (tightening vs. easing)
-   blended into the signal. Next markets: Indian equities and F&O depth
-   (broker accounts).
+   blended into the signal. Indian cash equities also route keylessly via
+   Yahoo when you use `.NS` / `.BO` tickers. Next target: broker-gated Indian
+   depth (Angel One / Breeze) for live options-chain ingestion.
 3. ~~Synthesis across multiple analyzers per asset~~ **done**: equity signals
    blend a price-structure source with a macro-context source.
-4. Optional LLM narrator, gated behind a user-supplied key.
-5. Multi-agent orchestration, once one market is validated end to end.
+4. ~~CLI / dashboard polish~~ **in progress**: `watch` batches assets, `scan-chain`
+   supports raw broker exports, `fetch-chain` can pull from Breeze, and the
+   read-only dashboard renders the log.
+5. Optional LLM narrator, gated behind a user-supplied key.
+6. Multi-agent orchestration, once one market is validated end to end.
 
 ## Contributing
 

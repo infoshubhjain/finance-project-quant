@@ -94,7 +94,7 @@ capability matrix and `.env.example`.
 
 ---
 
-## Phase 3 — Indian Markets: Equities and the F&O Depth Feature
+## Phase 3 — Indian Markets: Equities and the F&O Depth Feature `CORE DONE, ADAPTER PENDING`
 
 **Goal.** The home-market depth that makes this distinctive: Indian equities
 and, crucially, F&O analytics (OI, PCR, max-pain) that generic tools ignore.
@@ -114,6 +114,17 @@ and, crucially, F&O analytics (OI, PCR, max-pain) that generic tools ignore.
 **Done when.** With broker credentials configured, `scan NIFTY` produces an
 F&O-aware signal computing real OI/PCR/max-pain, and the system degrades
 gracefully (clear message, no crash) when credentials are absent.
+
+**Progress.** The deterministic core shipped first, per the cross-cutting
+principles: `OptionsChain` cache model, `analyzers/fno_oi.py` (PCR, max pain
+with hand-verified fixtures, OI-shift votes, put-wall/call-wall invalidation),
+`Market.IN_FNO` wired through synthesis and the CLI, plus live Breeze fetch
+support via `fetch-chain`. `scan NIFTY` degrades gracefully with instructions
+when no chain is cached, and runs the full analytics on any normalized chain
+dropped at `data/cache/chain/`. A provider-agnostic broker config/normalization
+scaffold now exists; Indian cash equities already route keylessly through Yahoo
+when you use `.NS` / `.BO` tickers. Remaining Phase 3 work is mostly breadth:
+an Angel One adapter and any extra Indian-market fixtures you want to pin.
 
 **Notes.** This is the "depth showcase" for the portfolio and the most
 defensible analytics in the project. Keep the research-only framing especially
@@ -161,6 +172,11 @@ screenshot.
 
 **Done when.** A visitor can see current signals and the honest historical track
 record in a browser, and the CLI covers the daily workflow.
+
+**Progress.** `watch` now batches multiple assets into a compact table,
+`scan-chain` accepts both normalized fixtures and raw broker-export JSON,
+`fetch-chain` can pull a live Breeze chain, and the read-only dashboard serves
+the latest recorded signals plus outcome stats from `web/server.py`.
 
 **Notes.** The track record view is the point: showing failed signals alongside
 winners is what separates this from a tip-seller. Build the CLI first; the
