@@ -55,7 +55,7 @@ backtestable and trustworthy. It is the heart of the project.
 
 ## 3. Architecture and data flow
 
-```
+```text
   ingest          cache             analyze            synthesize        narrate
  (sources)  ->  (local store)  ->  (deterministic) ->  (weighted vote) -> (prose)
                                                                               |
@@ -77,13 +77,13 @@ Each stage is one directory under `src/alpha_engine/`:
 | Analyzers    | `analyzers/`   | Deterministic, pure-function specialists.                   | no                | no           |
 | Synthesis    | `synthesis/`   | Folds analyzer `SignalSource`s into one `Signal`.           | no                | no           |
 | Narrative    | `narrative/`   | Writes the `thesis` string. Templated; optional LLM.        | only LLM call     | YES (only)   |
-| Validation   | `validation/`  | Immutable signal recording + backtesting (next to build).   | no                | no           |
-| CLI          | `cli/`         | The `scan` command wiring it all together.                  | via ingestion     | via narrative|
+| Validation   | `validation/`  | Immutable signal recording + outcome scoring + backtests.   | no                | no           |
+| CLI          | `cli/`         | `scan`, `backtest`, `record-stats` commands.                | via ingestion     | via narrative|
 
 ### The Signal schema is the contract
 
 Everything compiles against `schema/signal.py`. Fields: `asset`, `market`,
-`direction`, `confidence` (0-1), `timeframe`, `signal_sources` (list), 
+`direction`, `confidence` (0-1), `timeframe`, `signal_sources` (list),
 `invalidation_level`, `thesis`, `timestamp` (UTC), `schema_version`. Changing a
 field changes every downstream layer, so bump `SCHEMA_VERSION` deliberately and
 update consumers. The `invalidation_level` field ("the price at which this view is
@@ -93,7 +93,7 @@ wrong") is the most important honesty mechanism in the schema; keep it meaningfu
 
 ## 4. Repository layout
 
-```
+```text
 src/alpha_engine/
   schema/signal.py          Signal, SignalSource, enums. Read first.
   cache/models.py           Normalized data shapes (Candle, PriceSeries, MacroObservation).
@@ -102,9 +102,12 @@ src/alpha_engine/
   analyzers/crypto_trend.py First deterministic analyzer (dual-MA trend + momentum).
   synthesis/synthesize.py   Weighted-vote synthesis into a Signal.
   narrative/narrator.py     Templated thesis; optional-LLM hook.
-  validation/               (empty; next major build)
-  cli/main.py               `scan <ASSET>` entry point.
+  validation/recorder.py    Append-only JSONL signal log (data/signals/). Never mutates.
+  validation/outcomes.py    Scores signals vs. later prices; calibration summary.
+  validation/backtest.py    No-lookahead replay; `signal_at` is the truncation choke point.
+  cli/main.py               `scan`, `backtest`, `record-stats` entry points.
 tests/test_core.py          Determinism + schema validation tests.
+tests/test_validation.py    Recorder immutability, scoring rules, no-lookahead pin.
 pyproject.toml              Packaging, deps, pytest/ruff config.
 README.md                   User-facing overview + capability matrix.
 CONTRIBUTING.md             Contributor rules (mirrors the cardinal rule).
@@ -114,17 +117,22 @@ PLAN.md                     The full build roadmap.
 
 ---
 
-## 5. Current status (as of initial scaffold)
+## 5. Current status (Phase 1 complete)
 
 **Working:** end-to-end pipeline on the keyless crypto path. `scan BTC` fetches from
 CoinGecko, caches locally, runs the trend analyzer, synthesizes a signal, writes a
-templated thesis, prints JSON. 10 unit tests pass.
+templated thesis, appends the signal to the immutable log, prints JSON.
+`backtest BTC` replays cached history with no lookahead and reports hit rate,
+average captured move, and a calibration curve. `record-stats` scores the live
+signal log against outcomes. 26 unit tests pass.
 
 **Known honest limitations (documented, not hidden):**
 
-- The trend analyzer is a scaffold heuristic, not proven alpha.
-- Confidence is not yet calibrated and can pin at extreme values. Calibration is the
-  validation layer's job.
+- The trend analyzer is a scaffold heuristic, not proven alpha. The first backtest
+  confirms it: ~50% hit rate on 90 days of BTC.
+- Confidence is not calibrated, and the backtest now measures the miscalibration:
+  the highest-confidence bucket underperforms. Fixing this against recorded
+  outcomes is the next analyzer-side improvement.
 - Free data sources (CoinGecko keyless) rate-limit with HTTP 429. The cache exists
   precisely to minimize hits; wait and retry on 429. Tests are network-free.
 

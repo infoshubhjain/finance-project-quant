@@ -11,7 +11,7 @@ later and only after the validation harness measures it.
 
 from __future__ import annotations
 
-from alpha_engine.cache.models import PriceSeries
+from alpha_engine.cache.models import Candle, PriceSeries
 from alpha_engine.schema.signal import Direction, SignalSource
 
 
@@ -79,3 +79,22 @@ def analyze_trend(
     return SignalSource(
         name="crypto.trend", direction=direction, weight=weight, detail=detail
     )
+
+
+def trend_invalidation(
+    candles: list[Candle], direction: Direction, lookback: int = 10
+) -> float | None:
+    """The price at which the trend read is wrong: the recent swing low for a
+    bullish view, the recent swing high for a bearish one. Direction-aware on
+    purpose — a bearish thesis is invalidated by strength above it, not by a low
+    beneath it. Neutral views have nothing to invalidate.
+
+    Shared by the live `scan` path and the backtester so both judge signals
+    against the exact same level.
+    """
+    if not candles or direction is Direction.NEUTRAL:
+        return None
+    window = candles[-lookback:]
+    if direction is Direction.BULLISH:
+        return min(c.low for c in window)
+    return max(c.high for c in window)

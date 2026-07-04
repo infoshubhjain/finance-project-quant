@@ -22,7 +22,7 @@ contributing, env example).
 
 ---
 
-## Phase 1 — Validation Harness `NEXT, HIGHEST PRIORITY`
+## Phase 1 — Validation Harness `DONE`
 
 **Goal.** Turn the engine from "prints opinions" into "has a verifiable track
 record." This is the single most important phase. It is the trust engine, the
@@ -45,7 +45,11 @@ proprietary dataset of signals vs. realized outcomes).
 - New CLI command: `backtest <ASSET>` and `record-stats`.
 
 **Done when.** You can run `backtest BTC` and get an honest hit-rate and
-calibration report, and every live `scan` is being recorded immutably.
+calibration report, and every live `scan` is being recorded immutably. (Met:
+recorder + outcomes + backtest shipped with 16 tests, including an explicit
+no-lookahead pin via the `signal_at` choke point. First honest read on 90 days
+of BTC: ~50% hit rate, and high-confidence signals underperform low-confidence
+ones — the calibration problem is now measured, not suspected.)
 
 **Notes.** Expect the honest finding that the scaffold analyzer has little or
 no edge. That is a feature, not a failure: now you can improve against measured
@@ -56,7 +60,7 @@ bug.
 
 ---
 
-## Phase 2 — Second Market: US Equities + Macro Context
+## Phase 2 — Second Market: US Equities + Macro Context `NEXT`
 
 **Goal.** Prove the architecture generalizes beyond crypto, and add the macro
 layer your original design called for.
@@ -214,8 +218,8 @@ the orchestrator earlier is building a traffic system for a town with one car.
 
 ## Suggested immediate next step
 
-Build **Phase 1, the validation harness**, starting with
-`validation/recorder.py` (immutable append-only signal log) and wiring `scan`
-to record. That single move turns the project from a generator of opinions into
-a system that can prove, or honestly disprove, its own value, and it begins
-accumulating the one asset here that compounds.
+Build **Phase 2, US equities + macro context**, starting with
+`ingestion/finnhub.py` (daily candles behind a free key) and
+`analyzers/equity_trend.py`. The validation harness is live, so every new
+analyzer lands with a backtest report from day one — and run `scan` regularly
+in the meantime; the recorded-signal dataset only compounds while scans happen.

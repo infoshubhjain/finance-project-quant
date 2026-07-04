@@ -12,7 +12,7 @@ confidence-scored signals. It is built to be read, cloned, and run by anyone, wi
 
 It runs a clean pipeline, one stage at a time:
 
-```
+```text
   ingest          cache            analyze            synthesize        narrate
  (sources)  ->  (local store)  ->  (deterministic) ->  (weighted vote) -> (prose)
                                                                               |
@@ -34,6 +34,12 @@ pip install -e ".[dev]"
 
 # Generate a signal. No API key needed.
 python -m alpha_engine.cli.main scan BTC
+
+# Replay history through the analyzer (no lookahead) and see the honest hit rate.
+python -m alpha_engine.cli.main backtest BTC --days 365
+
+# Score every signal you've recorded against what the market actually did.
+python -m alpha_engine.cli.main record-stats
 ```
 
 You should see a JSON `Signal` printed, with a direction, a calibrated confidence,
@@ -63,7 +69,7 @@ writes the thesis. A configured model only upgrades the phrasing.
 
 ## How it's organized
 
-```
+```text
 src/alpha_engine/
   schema/        the Signal contract. The spine. Read this first.
   cache/         the read interface analyzers call instead of the network
@@ -71,8 +77,8 @@ src/alpha_engine/
   analyzers/     deterministic, pure-function specialists (one per concern)
   synthesis/     folds analyzer outputs into one Signal
   narrative/     writes the thesis string (templated, optional LLM)
-  validation/    (next) immutable signal recording + backtesting
-  cli/           the command you actually run
+  validation/    immutable signal recording, outcome scoring, backtesting
+  cli/           the commands you actually run: scan, backtest, record-stats
 tests/           proof the deterministic core is deterministic
 ```
 
@@ -83,17 +89,21 @@ one simple analyzer. A few things are deliberately honest about their limits:
 
 - **The trend analyzer is a scaffold, not alpha.** It's a transparent
   moving-average heuristic meant to exercise the pipeline. It is not a profitable
-  strategy and is not claimed to be.
+  strategy and is not claimed to be — and the backtester now proves it, showing a
+  roughly coin-flip hit rate. That measured baseline is what improvement gets
+  judged against.
 - **Confidence is not yet calibrated.** The current heuristic can pin confidence at
-  extreme values. Calibrating it honestly is the job of the validation layer, which
-  measures signals against realized outcomes before anyone trusts the number.
+  extreme values, and the backtest's calibration curve makes the miscalibration
+  visible (high-confidence buckets do not hit more often). Fixing the number against
+  recorded outcomes is the next analyzer-side job.
 - **Free data sources rate-limit.** The cache layer exists precisely so you read
   local data instead of hammering APIs. If you see a `429`, wait and retry.
 
 ## Roadmap
 
-1. Validation harness: immutable, timestamped recording of every signal plus
-   inputs, joined later against outcomes. This is the trust engine.
+1. ~~Validation harness~~ **done**: every `scan` is recorded to an append-only
+   log, `backtest` replays history with no lookahead, and `record-stats` scores
+   recorded signals against realized outcomes. This is the trust engine.
 2. More markets: US equities and macro context next (free keys), then Indian
    equities and F&O depth (broker accounts).
 3. Synthesis across multiple analyzers per asset.
