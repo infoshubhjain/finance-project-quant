@@ -60,7 +60,7 @@ bug.
 
 ---
 
-## Phase 2 — Second Market: US Equities + Macro Context `NEXT`
+## Phase 2 — Second Market: US Equities + Macro Context `DONE`
 
 **Goal.** Prove the architecture generalizes beyond crypto, and add the macro
 layer your original design called for.
@@ -80,7 +80,13 @@ layer your original design called for.
 
 **Done when.** `scan AAPL` produces a signal blending a price-structure source
 and a macro-context source, runs with a free FRED+Finnhub key, and the crypto
-default path still runs with no key at all.
+default path still runs with no key at all. (Met, with one deliberate deviation:
+equity candles come from Yahoo's keyless chart endpoint instead of Finnhub,
+whose free tier no longer serves stock candles — verified at build time. Result
+is better than the goal: `scan AAPL` needs no key at all; only the macro tilt
+is gated behind a free FRED key, and it degrades gracefully without one.
+`backtest AAPL` runs market-aware; first honest read on a year of AAPL: ~46%
+hit rate, trend-only.)
 
 **Notes.** This is where the multi-source synthesis seam earns its keep. Keep
 each source independently testable. Document the new free keys in README's
@@ -218,8 +224,10 @@ the orchestrator earlier is building a traffic system for a town with one car.
 
 ## Suggested immediate next step
 
-Build **Phase 2, US equities + macro context**, starting with
-`ingestion/finnhub.py` (daily candles behind a free key) and
-`analyzers/equity_trend.py`. The validation harness is live, so every new
-analyzer lands with a backtest report from day one — and run `scan` regularly
-in the meantime; the recorded-signal dataset only compounds while scans happen.
+Build **Phase 3, Indian markets and the F&O depth feature** — the distinctive
+analytics layer. Start with the `OptionsChain` cache model and the pure-function
+`analyzers/fno_oi.py` (PCR, max-pain, OI shifts) against fixture chains, so the
+deterministic core lands fully tested before any broker integration. The
+ingestion adapter (Angel One / Breeze, credential-gated) comes after the math is
+pinned. And keep running `scan` daily; the recorded-signal dataset only
+compounds while scans happen.

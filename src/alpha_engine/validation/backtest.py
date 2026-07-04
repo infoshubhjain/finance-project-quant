@@ -20,6 +20,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
+from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.schema.signal import Direction, Market, Signal, Timeframe
 from alpha_engine.synthesis.synthesize import synthesize
@@ -33,6 +34,14 @@ from alpha_engine.validation.outcomes import (
 
 # Bars the analyzer needs before its slow MA is defined (slow=30) plus margin.
 DEFAULT_WARMUP = 35
+
+# Which price-structure analyzer backs each market. Backtests replay only the
+# trend source; macro context is excluded until point-in-time macro alignment
+# exists (scoring it against today's revised series would be lookahead).
+_TREND_ANALYZER = {
+    Market.CRYPTO: analyze_trend,
+    Market.US_EQUITY: analyze_equity_trend,
+}
 
 
 class BacktestReport(BaseModel):
@@ -63,15 +72,18 @@ def signal_at(
     visible = series.candles[: t + 1]
     past = PriceSeries(asset=series.asset, interval=series.interval, candles=visible)
 
-    source = analyze_trend(past)
+    analyzer = _TREND_ANALYZER.get(market, analyze_trend)
+    source = analyzer(past)
     signal = synthesize(
         asset=series.asset,
         market=market,
         sources=[source],
         timeframe=Timeframe.SWING,
-        invalidation_level=trend_invalidation(visible, source.direction),
     )
-    return signal, visible[-1].close
+    # Invalidation follows the SYNTHESIZED direction, not the raw source's: a
+    # zero-weight bullish source synthesizes to neutral, which must carry no level.
+    invalidation = trend_invalidation(visible, signal.direction)
+    return signal.model_copy(update={"invalidation_level": invalidation}), visible[-1].close
 
 
 def run_backtest(

@@ -28,6 +28,13 @@ _COINGECKO_IDS: dict[str, str] = {
 }
 
 
+def supports(asset: str) -> bool:
+    """True if this adapter can serve the symbol. The CLI uses this to
+    auto-detect market: mapped crypto symbols route here, everything else is
+    treated as a US equity ticker."""
+    return asset.upper() in _COINGECKO_IDS
+
+
 def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> PriceSeries:
     """Fetch daily OHLC for a crypto asset, normalize, cache, and return it.
 

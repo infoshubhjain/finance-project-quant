@@ -32,8 +32,9 @@ git clone <your-repo-url> alpha-engine
 cd alpha-engine
 pip install -e ".[dev]"
 
-# Generate a signal. No API key needed.
+# Generate a signal. No API key needed. Crypto and US equities both work keyless.
 python -m alpha_engine.cli.main scan BTC
+python -m alpha_engine.cli.main scan AAPL
 
 # Replay history through the analyzer (no lookahead) and see the honest hit rate.
 python -m alpha_engine.cli.main backtest BTC --days 365
@@ -59,8 +60,8 @@ add free keys or broker accounts. Nothing here requires payment.
 | Market            | Default (zero-key)      | With free key            | With broker account   |
 | ----------------- | ----------------------- | ------------------------ | --------------------- |
 | Crypto            | CoinGecko (works now)   | —                        | —                     |
-| US equities       | planned                 | Finnhub / FMP (free)     | —                     |
-| US macro context  | planned                 | FRED (free key)          | —                     |
+| US equities       | Yahoo (works now)       | —                        | —                     |
+| US macro context  | —                       | FRED (works now)         | —                     |
 | Indian equities   | planned                 | —                        | Angel One / Breeze    |
 | Indian F&O / OI   | planned                 | —                        | Breeze / Dhan         |
 
@@ -104,9 +105,12 @@ one simple analyzer. A few things are deliberately honest about their limits:
 1. ~~Validation harness~~ **done**: every `scan` is recorded to an append-only
    log, `backtest` replays history with no lookahead, and `record-stats` scores
    recorded signals against realized outcomes. This is the trust engine.
-2. More markets: US equities and macro context next (free keys), then Indian
-   equities and F&O depth (broker accounts).
-3. Synthesis across multiple analyzers per asset.
+2. ~~US equities + macro context~~ **done**: `scan AAPL` works keyless via
+   Yahoo, and a free FRED key adds a macro-posture tilt (tightening vs. easing)
+   blended into the signal. Next markets: Indian equities and F&O depth
+   (broker accounts).
+3. ~~Synthesis across multiple analyzers per asset~~ **done**: equity signals
+   blend a price-structure source with a macro-context source.
 4. Optional LLM narrator, gated behind a user-supplied key.
 5. Multi-agent orchestration, once one market is validated end to end.
 

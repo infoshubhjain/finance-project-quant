@@ -99,7 +99,11 @@ src/alpha_engine/
   cache/models.py           Normalized data shapes (Candle, PriceSeries, MacroObservation).
   cache/interface.py        Cache (public read API) + LocalStore + TTL/staleness.
   ingestion/coingecko.py    Keyless crypto source. The zero-setup default path.
+  ingestion/yahoo.py        Keyless US equity daily candles (Yahoo chart endpoint).
+  ingestion/fred.py         US macro series; free-key-gated, degrades gracefully.
   analyzers/crypto_trend.py First deterministic analyzer (dual-MA trend + momentum).
+  analyzers/equity_trend.py Equity price structure; delegates to trend core for now.
+  analyzers/macro_context.py Tightening/easing posture as a capped contextual tilt.
   synthesis/synthesize.py   Weighted-vote synthesis into a Signal.
   narrative/narrator.py     Templated thesis; optional-LLM hook.
   validation/recorder.py    Append-only JSONL signal log (data/signals/). Never mutates.
@@ -108,6 +112,7 @@ src/alpha_engine/
   cli/main.py               `scan`, `backtest`, `record-stats` entry points.
 tests/test_core.py          Determinism + schema validation tests.
 tests/test_validation.py    Recorder immutability, scoring rules, no-lookahead pin.
+tests/test_markets.py       Yahoo/FRED parsing, equity + macro analyzers, blending.
 pyproject.toml              Packaging, deps, pytest/ruff config.
 README.md                   User-facing overview + capability matrix.
 CONTRIBUTING.md             Contributor rules (mirrors the cardinal rule).
@@ -117,14 +122,21 @@ PLAN.md                     The full build roadmap.
 
 ---
 
-## 5. Current status (Phase 1 complete)
+## 5. Current status (Phases 1–2 complete)
 
-**Working:** end-to-end pipeline on the keyless crypto path. `scan BTC` fetches from
-CoinGecko, caches locally, runs the trend analyzer, synthesizes a signal, writes a
-templated thesis, appends the signal to the immutable log, prints JSON.
-`backtest BTC` replays cached history with no lookahead and reports hit rate,
-average captured move, and a calibration curve. `record-stats` scores the live
-signal log against outcomes. 26 unit tests pass.
+**Working:** end-to-end pipeline on two keyless markets. `scan BTC` (CoinGecko)
+and `scan AAPL` (Yahoo) both fetch, cache, analyze, synthesize, narrate, append
+to the immutable log, and print JSON — no keys. With a free FRED key, equity
+scans additionally blend a macro-context tilt (fed funds trend, CPI YoY,
+unemployment) through the multi-source synthesis seam; without one they degrade
+gracefully to trend-only. `backtest <ASSET>` replays cached history for either
+market with no lookahead and reports hit rate, average captured move, and a
+calibration curve. `record-stats` scores the live signal log against outcomes.
+41 unit tests pass.
+
+Note one deviation from PLAN.md: equity candles come from Yahoo's keyless chart
+endpoint, not Finnhub — Finnhub's free tier no longer serves stock candles, and
+keyless beats key-gated per the rules below.
 
 **Known honest limitations (documented, not hidden):**
 
