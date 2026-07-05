@@ -28,8 +28,13 @@ from pathlib import Path
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
 from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.analyzers.fno_oi import analyze_fno, oi_support_resistance
+from alpha_engine.analyzers.macd import analyze_macd
 from alpha_engine.analyzers.macro_context import analyze_macro
+from alpha_engine.analyzers.multi_timeframe import analyze_multi_timeframe
 from alpha_engine.analyzers.rsi import analyze_rsi
+from alpha_engine.analyzers.support_resistance import analyze_support_resistance
+from alpha_engine.analyzers.volatility import analyze_volatility, volatility_scalar
+from alpha_engine.analyzers.vwap import analyze_vwap
 from alpha_engine.analyzers.bollinger import analyze_bollinger
 from alpha_engine.analyzers.volume import analyze_volume
 from alpha_engine.cache.interface import Cache
@@ -278,44 +283,46 @@ def _build_price_signal(
     """Build the deterministic price-series signal for crypto or equities.
 
     Uses multiple analyzers for a richer synthesis:
-    - Trend (dual MA) — core directional read
-    - RSI — momentum confirmation
+    - Trend (dual MA) — core directional read (market-specific)
+    - RSI, MACD — momentum confirmation
     - Bollinger Bands — volatility/position context
-    - Volume — OBV-based trend confirmation
+    - Volume (OBV), VWAP — participation reads (skipped when volume is absent)
+    - Support/resistance, multi-horizon alignment — structure reads
     - Macro context (equities only) — when FRED data available
-    - Indian equity specific gap/range analysis (IN_EQUITY only)
+    - Volatility regime — contextual; extreme tape dampens every other weight
     """
     from alpha_engine.analyzers.indian_equity import analyze_indian_equity
 
     sources: list[SignalSource] = []
 
+    # Core directional read is market-specific; everything after is shared.
     if market is Market.CRYPTO:
         sources.append(analyze_trend(series))
-        sources.append(analyze_rsi(series))
-        sources.append(analyze_bollinger(series))
-        vol_src = analyze_volume(series)
-        if vol_src.weight > 0:
-            sources.append(vol_src)
     elif market is Market.IN_EQUITY:
         sources.append(analyze_indian_equity(series))
-        sources.append(analyze_rsi(series))
-        sources.append(analyze_bollinger(series))
-        vol_src = analyze_volume(series)
-        if vol_src.weight > 0:
-            sources.append(vol_src)
-        macro_data = _load_macro(cache, no_refresh)
-        if macro_data:
-            sources.append(analyze_macro(macro_data))
     else:
         sources.append(analyze_equity_trend(series))
-        sources.append(analyze_rsi(series))
-        sources.append(analyze_bollinger(series))
-        vol_src = analyze_volume(series)
-        if vol_src.weight > 0:
-            sources.append(vol_src)
+
+    sources.append(analyze_rsi(series))
+    sources.append(analyze_macd(series))
+    sources.append(analyze_bollinger(series))
+    sources.append(analyze_multi_timeframe(series))
+    sources.append(analyze_support_resistance(series))
+    for volume_src in (analyze_volume(series), analyze_vwap(series)):
+        if volume_src.weight > 0:
+            sources.append(volume_src)
+
+    if market in (Market.IN_EQUITY, Market.US_EQUITY):
         macro_data = _load_macro(cache, no_refresh)
         if macro_data:
             sources.append(analyze_macro(macro_data))
+
+    # Volatility regime: extreme tape scales every directional weight down
+    # (deterministically), and the regime itself lands in the audit trail.
+    scalar = volatility_scalar(series)
+    if scalar != 1.0:
+        sources = [s.model_copy(update={"weight": round(s.weight * scalar, 4)}) for s in sources]
+    sources.append(analyze_volatility(series))
 
     signal = synthesize(
         asset=asset,
