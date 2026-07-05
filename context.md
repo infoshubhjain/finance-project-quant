@@ -122,17 +122,30 @@ PLAN.md                     The full build roadmap.
 
 ---
 
-## 5. Current status (Phases 1–2 complete)
+## 5. Current status (Phases 1–6 complete)
 
-**Working:** end-to-end pipeline on two keyless markets. `scan BTC` (CoinGecko)
-and `scan AAPL` (Yahoo) both fetch, cache, analyze, synthesize, narrate, append
-to the immutable log, and print JSON — no keys. With a free FRED key, equity
-scans additionally blend a macro-context tilt (fed funds trend, CPI YoY,
-unemployment) through the multi-source synthesis seam; without one they degrade
-gracefully to trend-only. `backtest <ASSET>` replays cached history for either
-market with no lookahead and reports hit rate, average captured move, and a
-calibration curve. `record-stats` scores the live signal log against outcomes.
-41 unit tests pass.
+**Working:** end-to-end pipeline across all configured markets. `scan BTC`
+(CoinGecko), `scan AAPL` (Yahoo), and `scan RELIANCE.NS` (Yahoo) all fetch,
+cache, analyze, synthesize, narrate, append to the immutable log, and print
+JSON — no keys. With a free FRED key, equity scans additionally blend a
+macro-context tilt (fed funds trend, CPI YoY, unemployment) through the
+multi-source synthesis seam; without one they degrade gracefully to trend-only.
+Indian F&O analytics (PCR, max-pain, OI shifts) run on any normalized chain
+in the cache, with live broker adapters for Breeze, Angel One, and Dhan.
+`backtest <ASSET>` replays cached history for any price-series market with no
+lookahead and reports hit rate, average captured move, and a calibration curve.
+`record-stats` scores the live signal log against outcomes. `scan-all` and
+`batch` run multi-asset scans across all configured markets. The read-only
+dashboard serves the latest recorded signals and outcome stats. 214 unit tests
+pass.
+
+Confidence calibration has been improved: the synthesis layer now factors in
+source reliability and agreement quality, so high confidence requires both
+strong agreement AND historically reliable source types. The source-count cap
+ensures few sources produce honestly uncertain confidence levels.
+
+The LLM narrator is optional and gated behind a user-supplied key. It rewrites
+thesis prose but is re-validated to never change a number on the Signal.
 
 Note one deviation from PLAN.md: equity candles come from Yahoo's keyless chart
 endpoint, not Finnhub — Finnhub's free tier no longer serves stock candles, and
@@ -141,10 +154,9 @@ keyless beats key-gated per the rules below.
 **Known honest limitations (documented, not hidden):**
 
 - The trend analyzer is a scaffold heuristic, not proven alpha. The first backtest
-  confirms it: ~50% hit rate on 90 days of BTC.
-- Confidence is not calibrated, and the backtest now measures the miscalibration:
-  the highest-confidence bucket underperforms. Fixing this against recorded
-  outcomes is the next analyzer-side improvement.
+  confirms it: ~50% hit rate on 90 days of BTC. Confidence calibration has been
+  improved to better reflect actual signal reliability, but the underlying
+  analyzers still need edge.
 - Free data sources (CoinGecko keyless) rate-limit with HTTP 429. The cache exists
   precisely to minimize hits; wait and retry on 429. Tests are network-free.
 

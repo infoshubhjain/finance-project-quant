@@ -21,6 +21,8 @@ from pydantic import BaseModel
 
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
 from alpha_engine.analyzers.equity_trend import analyze_equity_trend
+from alpha_engine.analyzers.rsi import analyze_rsi
+from alpha_engine.analyzers.bollinger import analyze_bollinger
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.schema.signal import Direction, Market, Signal, Timeframe
 from alpha_engine.synthesis.synthesize import synthesize
@@ -61,24 +63,42 @@ class BacktestReport(BaseModel):
 
 
 def signal_at(
-    series: PriceSeries, t: int, market: Market = Market.CRYPTO
+    series: PriceSeries, t: int, market: Market = Market.CRYPTO,
+    timeframe: Timeframe = Timeframe.SWING,
 ) -> tuple[Signal, float]:
     """Generate the signal the engine WOULD have emitted at bar index t, seeing
     only bars [0..t]. Returns (signal, entry_price at bar t's close).
 
     This is the no-lookahead choke point: the truncation happens here, before
     any analysis, so no caller can accidentally leak the future in.
+
+    Uses multiple analyzers (trend + RSI + Bollinger) for a richer synthesis,
+    matching the live scan pipeline.
     """
+    from alpha_engine.analyzers.indian_equity import analyze_indian_equity
+
     visible = series.candles[: t + 1]
     past = PriceSeries(asset=series.asset, interval=series.interval, candles=visible)
 
-    analyzer = _TREND_ANALYZER.get(market, analyze_trend)
-    source = analyzer(past)
+    sources = []
+    if market is Market.CRYPTO:
+        sources.append(analyze_trend(past))
+        sources.append(analyze_rsi(past))
+        sources.append(analyze_bollinger(past))
+    elif market is Market.IN_EQUITY:
+        sources.append(analyze_indian_equity(past))
+        sources.append(analyze_rsi(past))
+        sources.append(analyze_bollinger(past))
+    else:
+        sources.append(analyze_equity_trend(past))
+        sources.append(analyze_rsi(past))
+        sources.append(analyze_bollinger(past))
+
     signal = synthesize(
         asset=series.asset,
         market=market,
-        sources=[source],
-        timeframe=Timeframe.SWING,
+        sources=sources,
+        timeframe=timeframe,
     )
     # Invalidation follows the SYNTHESIZED direction, not the raw source's: a
     # zero-weight bullish source synthesizes to neutral, which must carry no level.
@@ -89,6 +109,7 @@ def signal_at(
 def run_backtest(
     series: PriceSeries,
     market: Market = Market.CRYPTO,
+    timeframe: Timeframe = Timeframe.SWING,
     warmup: int = DEFAULT_WARMUP,
     step: int = 1,
 ) -> BacktestReport:
@@ -97,14 +118,14 @@ def run_backtest(
     are heavily correlated; sparser sampling gives a less flattering, more
     honest read)."""
     candles = series.candles
-    horizon = HORIZON_BARS[Timeframe.SWING]
+    horizon = HORIZON_BARS[timeframe]
 
     scored: list[tuple[float, Outcome]] = []
     generated = 0
     directional = 0
 
     for t in range(warmup, len(candles) - 1, step):
-        signal, entry = signal_at(series, t, market=market)
+        signal, entry = signal_at(series, t, market=market, timeframe=timeframe)
         generated += 1
         if signal.direction is Direction.NEUTRAL or entry == 0:
             continue
@@ -121,7 +142,7 @@ def run_backtest(
     return BacktestReport(
         asset=series.asset,
         market=market,
-        timeframe=Timeframe.SWING,
+        timeframe=timeframe,
         bars=len(candles),
         warmup=warmup,
         signals_generated=generated,

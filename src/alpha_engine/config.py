@@ -44,20 +44,57 @@ def _unquote(value: str) -> str:
 
 
 def _load_env_file(path: Path) -> None:
-    for raw_line in path.read_text().splitlines():
+    """Parse a .env file, handling multi-line values enclosed in quotes."""
+    lines = path.read_text().splitlines()
+    i = 0
+    while i < len(lines):
+        raw_line = lines[i]
         line = raw_line.strip()
         if not line or line.startswith("#"):
+            i += 1
             continue
         if line.startswith("export "):
             line = line[len("export ") :].strip()
         if "=" not in line:
+            i += 1
             continue
         key, raw_value = line.split("=", 1)
         key = key.strip()
+        raw_value = raw_value.strip()
         if not key or key in os.environ:
+            i += 1
             continue
-        value = _unquote(_strip_inline_comment(raw_value.strip()))
+
+        # Handle multi-line quoted values: keep reading until closing quote found.
+        if raw_value and raw_value[0] in {"'", '"'}:
+            quote_char = raw_value[0]
+            # Check if closing quote exists on same line (excluding trailing comment)
+            stripped = _strip_inline_comment(raw_value)
+            if stripped.endswith(quote_char):
+                value = _unquote(stripped)
+            else:
+                # Multi-line: accumulate lines until closing quote.
+                accumulated = [raw_value]
+                i += 1
+                while i < len(lines):
+                    next_line = lines[i]
+                    accumulated.append(next_line)
+                    joined = " ".join(line.strip() for line in accumulated)
+                    # strip inline comment then check for closing quote
+                    comment_stripped = _strip_inline_comment(joined)
+                    if comment_stripped.endswith(quote_char):
+                        value = _unquote(comment_stripped)
+                        break
+                    i += 1
+                else:
+                    # Reached end of file without closing quote — use what we have.
+                    joined = " ".join(line.strip() for line in accumulated)
+                    value = _unquote(_strip_inline_comment(joined))
+        else:
+            value = _unquote(_strip_inline_comment(raw_value))
+
         os.environ[key] = value
+        i += 1
 
 
 def load_project_env() -> None:

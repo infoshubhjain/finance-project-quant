@@ -73,7 +73,9 @@ class LocalStore:
 
     def write_price(self, series: PriceSeries) -> None:
         p = self._price_path(series.asset, series.interval.value)
-        p.write_text(series.model_dump_json(indent=2))
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(series.model_dump_json(indent=2))
+        tmp.rename(p)
 
     def read_price(self, asset: str, interval: str) -> PriceSeries | None:
         p = self._price_path(asset, interval)
@@ -82,12 +84,35 @@ class LocalStore:
         return PriceSeries.model_validate_json(p.read_text())
 
     def write_macro(self, obs: list[MacroObservation]) -> None:
+        """Write macro observations, merging with any existing cached data.
+
+        Observations are keyed by (series_id, timestamp). New observations
+        replace any existing observation with the same key; older cached
+        observations are preserved. This prevents silent data loss when a
+        caller passes only a subset of the full series.
+        """
         by_series: dict[str, list[MacroObservation]] = {}
         for o in obs:
             by_series.setdefault(o.series_id, []).append(o)
-        for series_id, items in by_series.items():
+        for series_id, new_items in by_series.items():
             p = self._macro_path(series_id)
-            p.write_text(json.dumps([i.model_dump(mode="json") for i in items], indent=2))
+            existing: list[MacroObservation] = []
+            if p.exists():
+                try:
+                    raw = json.loads(p.read_text())
+                    existing = [MacroObservation.model_validate(r) for r in raw]
+                except Exception:  # noqa: BLE001 - corrupted cache, start fresh
+                    existing = []
+            # Merge: new observations override by timestamp
+            merged_by_ts: dict[datetime, MacroObservation] = {}
+            for item in existing:
+                merged_by_ts[item.ts] = item
+            for item in new_items:
+                merged_by_ts[item.ts] = item
+            merged = sorted(merged_by_ts.values(), key=lambda o: o.ts)
+            tmp = p.with_suffix(".tmp")
+            tmp.write_text(json.dumps([i.model_dump(mode="json") for i in merged], indent=2))
+            tmp.rename(p)
 
     def read_macro(self, series_id: str) -> list[MacroObservation]:
         p = self._macro_path(series_id)
@@ -98,7 +123,9 @@ class LocalStore:
 
     def write_chain(self, chain: OptionsChain) -> None:
         p = self._chain_path(chain.underlying)
-        p.write_text(chain.model_dump_json(indent=2))
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(chain.model_dump_json(indent=2))
+        tmp.rename(p)
 
     def read_chain(self, underlying: str) -> OptionsChain | None:
         p = self._chain_path(underlying)

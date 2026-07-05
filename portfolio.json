@@ -1,0 +1,11 @@
+{
+  "assets": [
+    {"asset": "BTC", "market": "crypto"},
+    {"asset": "ETH", "market": "crypto"},
+    {"asset": "SOL", "market": "crypto"},
+    {"asset": "AAPL", "market": "us_equity"},
+    {"asset": "MSFT", "market": "us_equity"},
+    {"asset": "GOOGL", "market": "us_equity"},
+    {"asset": "NVDA", "market": "us_equity"}
+  ]
+}

@@ -77,7 +77,8 @@ def fetch_series(
         timeout=20,
     )
     resp.raise_for_status()
-    obs = sorted(_parse_observations(series_id, resp.json()), key=lambda o: o.ts)
+    obs = _parse_observations(series_id, resp.json())
+    # write_macro merges and sorts by timestamp internally; no pre-sort needed here.
 
     cache.put_macro(obs)
     return obs

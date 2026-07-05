@@ -66,13 +66,17 @@ def record_signal(
 
 
 def read_records(root: str | Path = DEFAULT_ROOT) -> list[SignalRecord]:
-    """Load every recorded signal, oldest first. Reading never modifies the log."""
+    """Load every recorded signal, oldest first. Reading never modifies the log.
+
+    Reads line-by-line to avoid loading the entire file into memory at once.
+    """
     path = Path(root) / LOG_NAME
     if not path.exists():
         return []
     records: list[SignalRecord] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if line:
-            records.append(SignalRecord.model_validate_json(line))
+    with path.open(encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                records.append(SignalRecord.model_validate_json(line))
     return records

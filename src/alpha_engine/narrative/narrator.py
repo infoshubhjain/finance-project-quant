@@ -44,11 +44,15 @@ def _template_thesis(signal: Signal) -> str:
 def write_thesis(signal: Signal, use_llm: bool = False) -> Signal:
     """Return a copy of the signal with `thesis` populated. Always works offline.
 
-    `use_llm=True` is a placeholder hook for the optional LLM upgrade. Until that's
-    wired (and gated behind a user-supplied key), it falls back to the template so
-    behavior is identical with or without a key.
+    When `use_llm=True` and an LLM API key is configured (env `LLM_API_KEY`),
+    the templated thesis is handed to the LLM for rephrasing. The LLM output
+    is only accepted if re-validation confirms every numeric field is identical
+    to the pre-LLM signal. If no key is set, the LLM call fails, or validation
+    rejects the output, the template is used silently.
     """
     thesis = _template_thesis(signal)
-    # When the LLM path lands, it will take `signal` + `thesis` and rephrase,
-    # then we re-validate that it changed no numeric field before accepting.
+    if use_llm:
+        from alpha_engine.narrative.llm import rewrite_thesis
+
+        thesis = rewrite_thesis(signal, thesis)
     return signal.model_copy(update={"thesis": thesis})

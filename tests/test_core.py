@@ -115,3 +115,57 @@ def test_synthesis_empty_sources_is_neutral():
     sig = synthesize("BTC", Market.CRYPTO, [])
     assert sig.direction is Direction.NEUTRAL
     assert sig.confidence == 0.0
+
+
+def test_confidence_lower_with_fewer_sources():
+    """One source should produce lower confidence than three agreeing sources,
+    even with the same agreement quality. This tests the source-count cap."""
+    single = [SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8)]
+    triple = [
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
+        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7),
+        SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.9),
+    ]
+    sig1 = synthesize("BTC", Market.CRYPTO, single)
+    sig3 = synthesize("BTC", Market.CRYPTO, triple)
+    assert sig1.confidence < sig3.confidence
+
+
+def test_confidence_lower_with_disagreement():
+    """When sources disagree, confidence should drop even if the net direction
+    is clear."""
+    agree = [
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
+        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7),
+    ]
+    disagree = [
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
+        SignalSource(name="bollinger", direction=Direction.BEARISH, weight=0.7),
+    ]
+    sig_agree = synthesize("BTC", Market.CRYPTO, agree)
+    sig_disagree = synthesize("BTC", Market.CRYPTO, disagree)
+    # Both should resolve (one bullish, one likely bearish or neutral),
+    # but the disagreeing pair should have lower confidence in its direction
+    if sig_disagree.direction is Direction.NEUTRAL:
+        assert sig_disagree.confidence < sig_agree.confidence
+    else:
+        assert sig_disagree.confidence < sig_agree.confidence
+
+
+def test_confidence_never_exceeds_source_count_cap():
+    """Confidence with 1 source should never exceed 0.45."""
+    src = SignalSource(name="rsi", direction=Direction.BULLISH, weight=1.0)
+    sig = synthesize("BTC", Market.CRYPTO, [src])
+    assert sig.confidence <= 0.45
+
+
+def test_confidence_is_deterministic():
+    """Same inputs must always produce the same confidence."""
+    sources = [
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
+        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7),
+    ]
+    a = synthesize("BTC", Market.CRYPTO, sources)
+    b = synthesize("BTC", Market.CRYPTO, sources)
+    assert a.confidence == b.confidence
+    assert a.direction == b.direction

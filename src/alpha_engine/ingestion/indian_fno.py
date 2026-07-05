@@ -73,23 +73,23 @@ def _option_quote(row: dict, side: str) -> OptionQuote | None:
         right=right,
         oi=_number(oi_raw, "openInterest"),
         oi_change=(
-            _number(payload["changeinOpenInterest"], "changeinOpenInterest")
+            _number(payload.get("changeinOpenInterest"), "changeinOpenInterest")
             if payload.get("changeinOpenInterest") is not None
-            else _number(payload["oi_change"], "oi_change")
+            else _number(payload.get("oi_change"), "oi_change")
             if payload.get("oi_change") is not None
             else None
         ),
         volume=(
-            _number(payload["totalTradedVolume"], "totalTradedVolume")
+            _number(payload.get("totalTradedVolume"), "totalTradedVolume")
             if payload.get("totalTradedVolume") is not None
-            else _number(payload["volume"], "volume")
+            else _number(payload.get("volume"), "volume")
             if payload.get("volume") is not None
             else None
         ),
         last_price=(
-            _number(payload["lastPrice"], "lastPrice")
+            _number(payload.get("lastPrice"), "lastPrice")
             if payload.get("lastPrice") is not None
-            else _number(payload["ltp"], "ltp")
+            else _number(payload.get("ltp"), "ltp")
             if payload.get("ltp") is not None
             else None
         ),

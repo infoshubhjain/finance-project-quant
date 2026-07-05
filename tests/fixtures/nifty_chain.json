@@ -1,0 +1,17 @@
+{
+  "underlying": "NIFTY",
+  "expiry": "2026-07-30T00:00:00Z",
+  "spot": 24500.0,
+  "quotes": [
+    {"strike": 23500, "right": "call", "oi": 1200, "oi_change": 150, "volume": 80, "last_price": 1050.0},
+    {"strike": 23500, "right": "put", "oi": 3500, "oi_change": 400, "volume": 120, "last_price": 50.0},
+    {"strike": 24000, "right": "call", "oi": 2800, "oi_change": 300, "volume": 150, "last_price": 600.0},
+    {"strike": 24000, "right": "put", "oi": 4200, "oi_change": 500, "volume": 180, "last_price": 100.0},
+    {"strike": 24500, "right": "call", "oi": 3500, "oi_change": 200, "volume": 200, "last_price": 250.0},
+    {"strike": 24500, "right": "put", "oi": 3800, "oi_change": 100, "volume": 160, "last_price": 250.0},
+    {"strike": 25000, "right": "call", "oi": 2200, "oi_change": 100, "volume": 120, "last_price": 80.0},
+    {"strike": 25000, "right": "put", "oi": 1800, "oi_change": 50, "volume": 90, "last_price": 600.0},
+    {"strike": 25500, "right": "call", "oi": 1000, "oi_change": 50, "volume": 60, "last_price": 20.0},
+    {"strike": 25500, "right": "put", "oi": 800, "oi_change": 20, "volume": 40, "last_price": 1100.0}
+  ]
+}

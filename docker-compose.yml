@@ -1,0 +1,50 @@
+# Alpha Engine — Docker Compose
+# Usage:
+#   docker compose run --rm engine scan BTC        # single scan
+#   docker compose run --rm engine scan-all        # scan all assets
+#   docker compose up dashboard                     # launch web dashboard
+#   docker compose run --rm engine backtest BTC     # run backtest
+
+services:
+  # The CLI engine — run any command
+  engine:
+    build: .
+    volumes:
+      - ./data:/app/data        # persist cache and signal logs
+      - ./.env:/app/.env:ro     # optional: mount your .env for API keys
+    environment:
+      - FRED_API_KEY=${FRED_API_KEY:-}
+      - LLM_API_KEY=${LLM_API_KEY:-}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4o-mini}
+      - LLM_API_BASE=${LLM_API_BASE:-https://api.openai.com/v1}
+      - BREEZE_API_KEY=${BREEZE_API_KEY:-}
+      - BREEZE_API_SECRET=${BREEZE_API_SECRET:-}
+      - BREEZE_CLIENT_ID=${BREEZE_CLIENT_ID:-}
+      - BREEZE_USER_ID=${BREEZE_USER_ID:-}
+      - BREEZE_SESSION_TOKEN=${BREEZE_SESSION_TOKEN:-}
+      - ANGEL_ONE_API_KEY=${ANGEL_ONE_API_KEY:-}
+      - ANGEL_ONE_CLIENT_ID=${ANGEL_ONE_CLIENT_ID:-}
+      - ANGEL_ONE_ACCESS_TOKEN=${ANGEL_ONE_ACCESS_TOKEN:-}
+
+  # Web dashboard — read-only signal viewer
+  dashboard:
+    build: .
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    profiles:
+      - dashboard
+
+  # Batch scanner — run via cron or manually
+  batch:
+    build: .
+    command: ["batch", "--output", "/app/data/reports/batch.json"]
+    volumes:
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    environment:
+      - FRED_API_KEY=${FRED_API_KEY:-}
+    profiles:
+      - batch

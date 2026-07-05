@@ -23,6 +23,7 @@ from alpha_engine.ingestion.indian_fno import parse_indian_chain_payload
 class IndianBroker(str, Enum):
     ANGEL_ONE = "angel_one"
     BREEZE = "breeze"
+    DHAN = "dhan"
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +68,20 @@ def load_broker_credentials(broker: IndianBroker) -> BrokerCredentials:
             api_secret=os.getenv("ANGEL_ONE_API_SECRET"),
             client_id=os.getenv("ANGEL_ONE_CLIENT_ID"),
             access_token=os.getenv("ANGEL_ONE_ACCESS_TOKEN"),
+        )
+
+    if broker is IndianBroker.DHAN:
+        client_id = os.getenv("DHAN_CLIENT_ID")
+        if not client_id:
+            raise BrokerNotConfiguredError("DHAN_CLIENT_ID is required for Dhan")
+        access_token = os.getenv("DHAN_ACCESS_TOKEN")
+        if not access_token:
+            raise BrokerNotConfiguredError("DHAN_ACCESS_TOKEN is required for Dhan")
+        return BrokerCredentials(
+            broker=broker,
+            api_key=client_id,
+            client_id=client_id,
+            access_token=access_token,
         )
 
     api_key = os.getenv("BREEZE_API_KEY")

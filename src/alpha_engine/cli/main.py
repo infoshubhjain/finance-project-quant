@@ -20,6 +20,7 @@ degrade gracefully to trend-only. No command ever requires a key.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -28,6 +29,9 @@ from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidatio
 from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.analyzers.fno_oi import analyze_fno, oi_support_resistance
 from alpha_engine.analyzers.macro_context import analyze_macro
+from alpha_engine.analyzers.rsi import analyze_rsi
+from alpha_engine.analyzers.bollinger import analyze_bollinger
+from alpha_engine.analyzers.volume import analyze_volume
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
 from alpha_engine.ingestion.breeze import BreezeLiveClient
@@ -105,7 +109,7 @@ def _load_macro(cache: Cache, no_refresh: bool) -> dict[str, list[MacroObservati
     return data
 
 
-def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace) -> int:
+def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace, use_llm: bool = False) -> int:
     """The Indian F&O path reads an options chain, not a price series, so it has
     its own flow. No broker adapter is wired yet: the chain must already be in
     the cache (dropped there by hand or by a future Breeze/Angel One adapter).
@@ -120,10 +124,10 @@ def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace) -> int:
             file=sys.stderr,
         )
         return 1
-    return _scan_fno_chain(asset, chain, stale, cache, args)
+    return _scan_fno_chain(asset, chain, stale, cache, args, use_llm=use_llm)
 
 
-def _scan_fno_chain(asset: str, chain: OptionsChain, stale: bool, cache: Cache, args: argparse.Namespace) -> int:
+def _scan_fno_chain(asset: str, chain: OptionsChain, stale: bool, cache: Cache, args: argparse.Namespace, use_llm: bool = False) -> int:
     """Run the deterministic F&O pipeline on a normalized chain."""
     if stale:
         print(
@@ -132,7 +136,7 @@ def _scan_fno_chain(asset: str, chain: OptionsChain, stale: bool, cache: Cache, 
             file=sys.stderr,
         )
 
-    signal = _build_fno_signal(asset, chain)
+    signal = _build_fno_signal(asset, chain, use_llm=use_llm)
 
     if not args.no_record:
         record = record_signal(signal, entry_price=chain.spot)
@@ -151,18 +155,29 @@ def _fetch_fno_chain(
     """Fetch a live Indian options chain and immediately run the deterministic
     F&O analyzer on it.
 
-    Breeze is the easiest free path today because it exposes a full chain in one
-    call. The fetch is deliberately gated behind env credentials so the default
-    repo still stays keyless.
+    Supports Breeze and Angel One. The broker is selected via --broker flag
+    (default: breeze). The fetch is deliberately gated behind env credentials
+    so the default repo still stays keyless.
     """
+    broker = getattr(args, "broker", "breeze")
+
     try:
-        client = BreezeLiveClient.from_env()
+        if broker == "angelone":
+            from alpha_engine.ingestion.angelone import AngelOneLiveClient
+
+            client = AngelOneLiveClient.from_env()
+        elif broker == "dhan":
+            from alpha_engine.ingestion.dhan import DhanLiveClient
+
+            client = DhanLiveClient.from_env()
+        else:
+            client = BreezeLiveClient.from_env()
         chain = client.fetch_chain(asset, expiry_date)
     except BrokerNotConfiguredError as e:
         print(f"[error] {e}", file=sys.stderr)
         return 1
     except Exception as e:  # noqa: BLE001 - surface live broker issues clearly
-        print(f"[error] Breeze fetch failed: {e}", file=sys.stderr)
+        print(f"[error] {broker} fetch failed: {e}", file=sys.stderr)
         return 1
 
     cache.put_chain(chain)
@@ -173,7 +188,7 @@ def _fetch_fno_chain(
     return _scan_fno_chain(asset, chain, False, cache, args)
 
 
-def _build_fno_signal(asset: str, chain: OptionsChain) -> Signal:
+def _build_fno_signal(asset: str, chain: OptionsChain, use_llm: bool = False) -> Signal:
     """Build the deterministic F&O signal for one chain."""
     source = analyze_fno(chain)
     signal = synthesize(
@@ -184,7 +199,7 @@ def _build_fno_signal(asset: str, chain: OptionsChain) -> Signal:
     )
     invalidation = oi_support_resistance(chain, signal.direction)
     signal = signal.model_copy(update={"invalidation_level": invalidation})
-    signal = write_thesis(signal)
+    signal = write_thesis(signal, use_llm=use_llm)
     return signal
 
 
@@ -223,9 +238,10 @@ def cmd_scan(args: argparse.Namespace) -> int:
     cache = Cache()
     asset = args.asset.upper()
     market = detect_market(asset, args.market)
+    use_llm = getattr(args, "llm", False)
 
     if market is Market.IN_FNO:
-        return _scan_fno(asset, cache, args)
+        return _scan_fno(asset, cache, args, use_llm=use_llm)
 
     try:
         series = _load_series(asset, market, args.days, args.no_refresh, cache)
@@ -233,7 +249,7 @@ def cmd_scan(args: argparse.Namespace) -> int:
         print(f"[error] fetch failed: {e}", file=sys.stderr)
         return 1
 
-    signal = _build_price_signal(asset, market, series, cache, args.no_refresh)
+    signal = _build_price_signal(asset, market, series, cache, args.no_refresh, use_llm=use_llm)
 
     if not args.no_record:
         entry = series.candles[-1].close if series.candles else None
@@ -245,14 +261,47 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _build_price_signal(
-    asset: str, market: Market, series: PriceSeries, cache: Cache, no_refresh: bool
+    asset: str, market: Market, series: PriceSeries, cache: Cache, no_refresh: bool,
+    use_llm: bool = False,
 ) -> Signal:
-    """Build the deterministic price-series signal for crypto or equities."""
+    """Build the deterministic price-series signal for crypto or equities.
+
+    Uses multiple analyzers for a richer synthesis:
+    - Trend (dual MA) — core directional read
+    - RSI — momentum confirmation
+    - Bollinger Bands — volatility/position context
+    - Volume — OBV-based trend confirmation
+    - Macro context (equities only) — when FRED data available
+    - Indian equity specific gap/range analysis (IN_EQUITY only)
+    """
+    from alpha_engine.analyzers.indian_equity import analyze_indian_equity
+
     sources: list[SignalSource] = []
+
     if market is Market.CRYPTO:
         sources.append(analyze_trend(series))
+        sources.append(analyze_rsi(series))
+        sources.append(analyze_bollinger(series))
+        vol_src = analyze_volume(series)
+        if vol_src.weight > 0:
+            sources.append(vol_src)
+    elif market is Market.IN_EQUITY:
+        sources.append(analyze_indian_equity(series))
+        sources.append(analyze_rsi(series))
+        sources.append(analyze_bollinger(series))
+        vol_src = analyze_volume(series)
+        if vol_src.weight > 0:
+            sources.append(vol_src)
+        macro_data = _load_macro(cache, no_refresh)
+        if macro_data:
+            sources.append(analyze_macro(macro_data))
     else:
         sources.append(analyze_equity_trend(series))
+        sources.append(analyze_rsi(series))
+        sources.append(analyze_bollinger(series))
+        vol_src = analyze_volume(series)
+        if vol_src.weight > 0:
+            sources.append(vol_src)
         macro_data = _load_macro(cache, no_refresh)
         if macro_data:
             sources.append(analyze_macro(macro_data))
@@ -265,7 +314,7 @@ def _build_price_signal(
     )
     invalidation = trend_invalidation(series.candles, signal.direction)
     signal = signal.model_copy(update={"invalidation_level": invalidation})
-    signal = write_thesis(signal)
+    signal = write_thesis(signal, use_llm=use_llm)
     return signal
 
 
@@ -299,10 +348,10 @@ def _format_table(rows: list[dict[str, str]]) -> str:
     widths = {h: len(h) for h in headers}
     for row in rows:
         for h in headers:
-            widths[h] = max(widths[h], len(row[h]))
+            widths[h] = max(widths[h], len(row.get(h, "")))
 
     def fmt(values: dict[str, str]) -> str:
-        return "  ".join(values[h].ljust(widths[h]) for h in headers)
+        return "  ".join(values.get(h, "").ljust(widths[h]) for h in headers)
 
     lines = [fmt({h: h for h in headers})]
     lines.append("  ".join("-" * widths[h] for h in headers))
@@ -319,6 +368,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     """
     cache = Cache()
     rows: list[dict[str, str]] = []
+    use_llm = getattr(args, "llm", False)
 
     for raw_asset in args.assets:
         asset = raw_asset.upper()
@@ -330,7 +380,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                     raise FileNotFoundError(
                         f"no cached chain for {asset}; run scan-chain first or drop a JSON file"
                     )
-                signal = _build_fno_signal(asset, chain)
+                signal = _build_fno_signal(asset, chain, use_llm=use_llm)
                 status = "stale" if stale else "ok"
                 if args.record:
                     record = record_signal(signal, entry_price=chain.spot)
@@ -340,7 +390,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                     )
             else:
                 series = _load_series(asset, market, args.days, args.no_refresh, cache)
-                signal = _build_price_signal(asset, market, series, cache, args.no_refresh)
+                signal = _build_price_signal(asset, market, series, cache, args.no_refresh, use_llm=use_llm)
                 status = "stale" if cache.get_price(asset, "1d")[1] else "ok"
                 if args.record:
                     entry = series.candles[-1].close if series.candles else None
@@ -414,11 +464,79 @@ def cmd_record_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_scan_all(args: argparse.Namespace) -> int:
+    """Scan all configured assets across all markets. The batch entry point."""
+    from alpha_engine.orchestrator import (
+        load_config,
+        run_batch,
+    )
+
+    config = load_config(
+        config_path=getattr(args, "config", None),
+        assets=getattr(args, "assets", None),
+        days=args.days,
+        record=not args.no_record,
+        use_llm=getattr(args, "llm", False),
+    )
+
+    print(f"[scan-all] scanning {len(config.targets)} assets...", file=sys.stderr)
+    report = run_batch(config)
+
+    print(f"\n[scan-all] done: {report.ok}/{report.total} ok, {report.errors} errors", file=sys.stderr)
+    print(json.dumps(report.summary(), indent=2))
+    return 0 if report.errors == 0 else 1
+
+
+def cmd_batch(args: argparse.Namespace) -> int:
+    """Run a scheduled batch scan with report output. Cron-friendly."""
+
+    from alpha_engine.orchestrator import (
+        load_config,
+        run_scheduled,
+    )
+
+    config = load_config(
+        config_path=getattr(args, "config", None),
+        assets=getattr(args, "assets", None),
+        days=args.days,
+        record=not args.no_record,
+        use_llm=getattr(args, "llm", False),
+    )
+
+    output = getattr(args, "output", None)
+    report = run_scheduled(config, output_path=output)
+
+    if output:
+        print(f"[batch] report written to {output}", file=sys.stderr)
+
+    print(f"[batch] done: {report.ok}/{report.total} ok, {report.errors} errors", file=sys.stderr)
+    return 0 if report.errors == 0 else 1
+
+
+def cmd_dashboard(args: argparse.Namespace) -> int:
+    """Launch the read-only web dashboard."""
+    import sys as _sys
+
+    host = getattr(args, "host", "127.0.0.1")
+    port = getattr(args, "port", 8000)
+
+    try:
+        from web.server import main as web_main
+        return web_main([f"--host={host}", f"--port={port}"])
+    except ImportError:
+        print(
+            f"[error] web server module not found. Run directly:\n"
+            f"  python -m web.server --host {host} --port {port}",
+            file=_sys.stderr,
+        )
+        return 1
+
+
 def _add_market_args(sub: argparse.ArgumentParser, default_days: int) -> None:
     sub.add_argument("asset", help="symbol, e.g. BTC, ETH, AAPL, NIFTY")
     sub.add_argument(
         "--market",
-        choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_FNO.value],
+        choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_EQUITY.value, Market.IN_FNO.value],
         default=None,
         help="force the market instead of auto-detecting",
     )
@@ -433,6 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan = sub.add_parser("scan", help="generate a signal for one asset")
     _add_market_args(scan, default_days=90)
     scan.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    scan.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis (needs LLM_API_KEY)")
     scan.set_defaults(func=cmd_scan)
 
     scan_chain = sub.add_parser(
@@ -450,13 +569,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     fetch_chain = sub.add_parser(
         "fetch-chain",
-        help="fetch a live Indian options chain from Breeze and analyze it",
+        help="fetch a live Indian options chain from Breeze or Angel One and analyze it",
     )
     fetch_chain.add_argument("asset", help="underlying symbol, e.g. NIFTY")
     fetch_chain.add_argument(
         "--expiry",
         required=True,
         help="expiry date to fetch, in YYYY-MM-DD format",
+    )
+    fetch_chain.add_argument(
+        "--broker",
+        choices=["breeze", "angelone", "dhan"],
+        default="breeze",
+        help="broker to fetch from (default: breeze)",
     )
     fetch_chain.add_argument("--no-record", action="store_true", help="do not append to the signal log")
     fetch_chain.set_defaults(func=cmd_fetch_chain)
@@ -470,6 +595,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--days", type=int, default=90, help="history window to fetch")
     watch.add_argument("--no-refresh", action="store_true", help="use cache even if stale")
     watch.add_argument("--record", action="store_true", help="append results to the signal log")
+    watch.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis (needs LLM_API_KEY)")
     watch.add_argument(
         "--sort",
         choices=["asset", "market", "confidence"],
@@ -485,6 +611,28 @@ def build_parser() -> argparse.ArgumentParser:
 
     stats = sub.add_parser("record-stats", help="score recorded live signals against outcomes")
     stats.set_defaults(func=cmd_record_stats)
+
+    scan_all = sub.add_parser("scan-all", help="scan all configured assets across all markets")
+    scan_all.add_argument("--config", default=None, help="path to portfolio.json config file")
+    scan_all.add_argument("--assets", nargs="+", default=None, help="explicit asset list, e.g. BTC AAPL NIFTY")
+    scan_all.add_argument("--days", type=int, default=90, help="history window to fetch")
+    scan_all.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    scan_all.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis")
+    scan_all.set_defaults(func=cmd_scan_all)
+
+    batch = sub.add_parser("batch", help="scheduled batch scan with report output (cron-friendly)")
+    batch.add_argument("--config", default=None, help="path to portfolio.json config file")
+    batch.add_argument("--assets", nargs="+", default=None, help="explicit asset list")
+    batch.add_argument("--days", type=int, default=90, help="history window to fetch")
+    batch.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    batch.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis")
+    batch.add_argument("--output", default=None, help="write JSON report to this path")
+    batch.set_defaults(func=cmd_batch)
+
+    dashboard = sub.add_parser("dashboard", help="launch the read-only web dashboard")
+    dashboard.add_argument("--host", default="127.0.0.1", help="bind address")
+    dashboard.add_argument("--port", type=int, default=8000, help="port to listen on")
+    dashboard.set_defaults(func=cmd_dashboard)
 
     return p
 

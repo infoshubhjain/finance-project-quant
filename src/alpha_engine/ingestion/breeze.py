@@ -11,7 +11,7 @@ from __future__ import annotations
 import base64
 import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
 
@@ -44,7 +44,7 @@ def _json_body(payload: dict[str, Any]) -> str:
 
 
 def _timestamp() -> str:
-    return datetime.utcnow().isoformat(timespec="milliseconds")[:19] + ".000Z"
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds")[:19] + ".000Z"
 
 
 def _checksum(timestamp: str, body: str, api_secret: str) -> str:
@@ -150,7 +150,7 @@ class BreezeLiveClient:
     def fetch_chain(self, underlying: str, expiry_date: str) -> OptionsChain:
         body = _option_chain_body(underlying=underlying, expiry_date=expiry_date)
         headers = self._headers(body)
-        resp = _post_or_get(f"{_API_URL}optionchain", "GET", body, headers)
+        resp = _post_or_get(f"{_API_URL}optionchain", "POST", body, headers)
         resp.raise_for_status()
         payload = _unwrap_payload(resp.json())
         payload.setdefault("underlying", underlying)

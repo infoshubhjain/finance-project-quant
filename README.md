@@ -84,7 +84,7 @@ add free keys or broker accounts. Nothing here requires payment.
 | US equities       | Yahoo (works now)       | —                        | —                     |
 | US macro context  | —                       | FRED (works now)         | —                     |
 | Indian equities   | Yahoo via `.NS` / `.BO` | —                        | Angel One / Breeze    |
-| Indian F&O / OI   | analytics ready*        | `scan-chain` raw/fixture flow | Breeze / Dhan    |
+| Indian F&O / OI   | analytics ready*        | `scan-chain` raw/fixture flow | Breeze / Angel One / Dhan |
 
 \* The F&O analytics (PCR, max pain, OI walls) are built and tested;
 `scan NIFTY` runs them on any normalized chain in the cache, `scan-chain`
@@ -136,15 +136,22 @@ one simple analyzer. A few things are deliberately honest about their limits:
 2. ~~US equities + macro context~~ **done**: `scan AAPL` works keyless via
    Yahoo, and a free FRED key adds a macro-posture tilt (tightening vs. easing)
    blended into the signal. Indian cash equities also route keylessly via
-   Yahoo when you use `.NS` / `.BO` tickers. Next target: broker-gated Indian
-   depth (Angel One / Breeze) for live options-chain ingestion.
-3. ~~Synthesis across multiple analyzers per asset~~ **done**: equity signals
-   blend a price-structure source with a macro-context source.
-4. ~~CLI / dashboard polish~~ **in progress**: `watch` batches assets, `scan-chain`
-   supports raw broker exports, `fetch-chain` can pull from Breeze, and the
-   read-only dashboard renders the log.
-5. Optional LLM narrator, gated behind a user-supplied key.
-6. Multi-agent orchestration, once one market is validated end to end.
+   Yahoo when you use `.NS` / `.BO` tickers.
+3. ~~Indian markets (F&O depth)~~ **done**: the distinctive analytics layer.
+   `OptionsChain` cache model, deterministic PCR / max-pain / OI-shift
+   analyzers, and live broker adapters for Breeze, Angel One, and Dhan.
+   `scan NIFTY` runs on any normalized chain in the cache, `scan-chain`
+   normalizes raw broker-export JSONs, and `fetch-chain` pulls live chains.
+4. ~~Optional LLM narrator~~ **done**: gated behind a user-supplied key, with
+   mandatory re-validation that no numeric field changed. Falls back to a
+   deterministic template when no key is set.
+5. ~~CLI / dashboard polish~~ **done**: `watch` batches assets, `scan-chain`
+   supports raw broker exports, `fetch-chain` supports Breeze/Angel One/Dhan,
+   `scan-all` and `batch` run multi-asset scans, and the read-only dashboard
+   renders the log.
+6. ~~Multi-agent orchestration~~ **done**: the orchestrator decides which
+   analyzers fire and when, with `scan-all` and `batch` CLI commands for
+   scheduled batch scans.
 
 ## Contributing
 

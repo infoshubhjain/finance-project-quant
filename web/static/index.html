@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Alpha Engine Dashboard</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="bg-gradient"></div>
+  <div class="wrap">
+    <header>
+      <div class="logo">
+        <div class="logo-icon">&alpha;</div>
+        <div>
+          <h1>Alpha Engine</h1>
+          <div class="tagline">Deterministic market signal research engine</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="updated"><span class="status-dot"></span><span id="updated">Loading&hellip;</span></div>
+      </div>
+    </header>
+
+    <div class="grid">
+      <!-- Summary tiles -->
+      <section class="card span-3">
+        <div class="label">Total Signals</div>
+        <div class="metric" id="total-records">-</div>
+      </section>
+      <section class="card span-3">
+        <div class="label">Assets Tracked</div>
+        <div class="metric" id="latest-count">-</div>
+      </section>
+      <section class="card span-3">
+        <div class="label">Hit Rate</div>
+        <div class="metric" id="hit-rate">-</div>
+        <div class="sub" id="hit-rate-sub"></div>
+      </section>
+      <section class="card span-3">
+        <div class="label">Avg Return</div>
+        <div class="metric" id="avg-return">-</div>
+        <div class="sub" id="avg-return-sub"></div>
+      </section>
+
+      <!-- Market breakdown -->
+      <section class="card span-4">
+        <div class="label">Signals by Market</div>
+        <div id="markets-chart" class="chart-body"></div>
+      </section>
+
+      <!-- Track record charts -->
+      <section class="card span-4">
+        <div class="label">Calibration <span class="label-hint">stated confidence vs. actual hit rate</span></div>
+        <div id="calibration-chart" class="chart-body"></div>
+      </section>
+      <section class="card span-4">
+        <div class="label">Outcome Distribution</div>
+        <div id="outcome-bars" class="chart-body"></div>
+      </section>
+
+      <!-- Signal feed -->
+      <section class="card span-12">
+        <div class="label">Latest Signals <span class="label-hint">click a row for full history</span></div>
+        <div class="table-wrap">
+          <table id="signals-table">
+            <thead>
+              <tr>
+                <th>Asset</th>
+                <th>Market</th>
+                <th>Direction</th>
+                <th>Confidence</th>
+                <th>Invalidation</th>
+                <th>Sources</th>
+                <th>Recorded</th>
+                <th>Thesis</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- Per-asset detail (hidden until a row is clicked) -->
+      <section class="card span-12" id="asset-detail" hidden>
+        <div class="detail-head">
+          <div>
+            <div class="label">Signal History</div>
+            <h2 id="detail-asset"></h2>
+          </div>
+          <button id="detail-close" class="close-btn" type="button" aria-label="Close history">&times;</button>
+        </div>
+        <div class="table-wrap">
+          <table id="history-table">
+            <thead>
+              <tr>
+                <th>Recorded</th>
+                <th>Direction</th>
+                <th>Confidence</th>
+                <th>Entry</th>
+                <th>Invalidation</th>
+                <th>Outcome</th>
+                <th>Return</th>
+                <th>Thesis</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <footer>
+      <div class="footer-text">Alpha Engine v0.1.0 &middot; Open-source deterministic signal research</div>
+      <div class="footer-disclaimer">
+        Research output only. Not investment advice. All signals are directional views with measured confidence, not buy/sell recommendations.
+      </div>
+    </footer>
+  </div>
+
+  <div id="tooltip" class="tooltip" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
