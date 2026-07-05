@@ -194,11 +194,12 @@ def test_backtest_is_deterministic():
 
 
 def test_backtest_scores_a_clean_uptrend_as_hits():
-    """With multiple analyzers (trend + RSI + Bollinger), a clean uptrend
-    produces a mix of bullish, neutral, and bearish signals as RSI goes overbought
-    and Bollinger hits the upper band. The key property: the backtest runs without
-    errors and generates meaningful signals with non-zero confidence."""
-    closes = [100.0 * (1.02**i) for i in range(80)]  # steady 2%/bar uptrend
+    """With the full analyzer pipeline, a clean uptrend produces a mix of
+    bullish, neutral, and bearish signals as RSI goes overbought and Bollinger
+    hits the upper band. The key property: the backtest runs without errors
+    and generates meaningful signals with non-zero confidence. (120 bars: the
+    multi-timeframe long horizon pushed DEFAULT_WARMUP to 80.)"""
+    closes = [100.0 * (1.02**i) for i in range(120)]  # steady 2%/bar uptrend
     report = run_backtest(_series(closes))
     assert report.directional > 0
     assert report.summary.resolved > 0

@@ -46,7 +46,7 @@ from alpha_engine.ingestion.indian_fno import load_indian_chain
 from alpha_engine.narrative.narrator import write_thesis
 from alpha_engine.schema.signal import Market, Signal, SignalSource, Timeframe
 from alpha_engine.synthesis.synthesize import synthesize
-from alpha_engine.validation.backtest import run_backtest
+from alpha_engine.validation.backtest import run_backtest, run_per_analyzer_backtest
 from alpha_engine.validation.outcomes import score_record, summarize_outcomes
 from alpha_engine.validation.recorder import read_records, record_signal
 
@@ -378,7 +378,20 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"[error] fetch failed: {e}", file=sys.stderr)
         return 1
 
-    report = run_backtest(series, market=market, step=args.step)
+    if getattr(args, "per_analyzer", False):
+        reports = run_per_analyzer_backtest(series, market=market, step=args.step)
+        print(
+            json.dumps({name: r.model_dump(mode="json") for name, r in reports.items()}, indent=2)
+        )
+        return 0
+
+    # Equity backtests replay macro context point-in-time (observations dated
+    # after the simulated bar stay invisible — see backtest.py).
+    macro_data = None
+    if market in (Market.US_EQUITY, Market.IN_EQUITY):
+        macro_data = _load_macro(cache, args.no_refresh) or None
+
+    report = run_backtest(series, market=market, step=args.step, macro_data=macro_data)
     print(report.model_dump_json(indent=2))
     return 0
 
@@ -672,6 +685,11 @@ def build_parser() -> argparse.ArgumentParser:
     bt = sub.add_parser("backtest", help="replay history through the analyzer, no lookahead")
     _add_market_args(bt, default_days=365)
     bt.add_argument("--step", type=int, default=1, help="bars between simulated signals")
+    bt.add_argument(
+        "--per-analyzer",
+        action="store_true",
+        help="backtest each analyzer in isolation plus the blend, for comparison",
+    )
     bt.set_defaults(func=cmd_backtest)
 
     stats = sub.add_parser("record-stats", help="score recorded live signals against outcomes")
