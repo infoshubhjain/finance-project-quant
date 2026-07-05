@@ -11,10 +11,13 @@ Run:
     python -m alpha_engine.cli.main record-stats
 
 Market is auto-detected (mapped crypto symbols -> crypto; Indian index symbols
--> F&O; `.NS` / `.BO` suffixes -> Indian equities; everything else -> US
-equity) and can be forced with --market. Equity scans blend the trend read with
-a macro-context tilt when FRED data is available; with no FRED_API_KEY they
-degrade gracefully to trend-only. No command ever requires a key.
+-> F&O; `.NS` / `.BO` suffixes -> Indian equities; currency pairs like EURUSD
+-> forex; everything else -> US equity) and can be forced with --market.
+Equity scans blend the trend read with a macro-context tilt when FRED data is
+available; with no FRED_API_KEY they degrade gracefully to trend-only. The
+default crypto/US-equity paths never require a key; forex needs OANDA
+credentials and live F&O chains need a broker key, both degrading to a clear
+message without one.
 """
 
 from __future__ import annotations
@@ -145,16 +148,18 @@ def _load_macro(cache: Cache, no_refresh: bool) -> dict[str, list[MacroObservati
 
 def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace, use_llm: bool = False) -> int:
     """The Indian F&O path reads an options chain, not a price series, so it has
-    its own flow. No broker adapter is wired yet: the chain must already be in
-    the cache (dropped there by hand or by a future Breeze/Angel One adapter).
-    Missing data degrades to a clear message, never a crash."""
+    its own flow. `scan` itself never fetches a chain: it reads whatever the
+    cache holds (put there by `fetch-chain` with broker credentials, or by
+    `scan-chain` from a JSON fixture). Missing data degrades to a clear
+    message, never a crash."""
     chain, stale = cache.get_chain(asset)
     if chain is None:
         print(
-            f"[error] no options chain cached for {asset}. Indian F&O needs broker "
-            f"data (Breeze / Angel One adapter not yet wired). To run the analytics "
-            f"today, drop a normalized OptionsChain JSON at data/cache/chain/{asset}.json "
-            f"(see cache/models.py for the shape).",
+            f"[error] no options chain cached for {asset}. Fetch one live with "
+            f"`fetch-chain {asset} --expiry YYYY-MM-DD --broker breeze|angelone|dhan` "
+            f"(needs broker credentials in .env), or run the analytics offline by "
+            f"dropping a normalized OptionsChain JSON at data/cache/chain/{asset}.json "
+            f"and using `scan-chain` (see cache/models.py for the shape).",
             file=sys.stderr,
         )
         return 1
@@ -674,7 +679,7 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("assets", nargs="+", help="symbols to scan, e.g. BTC AAPL NIFTY")
     watch.add_argument(
         "--market",
-        choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_FNO.value],
+        choices=[m.value for m in Market],
         default=None,
         help="force one market for every asset",
     )

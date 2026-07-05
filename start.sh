@@ -19,6 +19,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 
+# Project root must be on PYTHONPATH so `web.server` is importable (web/ is
+# not installed as a package, but the CLI dashboard command needs to reach it).
+export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -56,6 +60,13 @@ mkdir -p data/cache/price data/cache/macro data/cache/chain data/signals data/re
 
 # --- Step 5: Run the command ---
 if [ $# -eq 0 ]; then
+    log "No command given — launching dashboard (use --help for CLI usage)"
+    log "Dashboard: http://localhost:8000"
+    python -m alpha_engine.cli.main dashboard
+    exit $?
+fi
+
+if [ "$1" = "--help" ] || [ "$1" = "-h" ]; then
     echo ""
     echo "Alpha Engine — Open research engine for market signals"
     echo "===================================================="
@@ -63,6 +74,7 @@ if [ $# -eq 0 ]; then
     echo "Usage: ./start.sh <command> [args...]"
     echo ""
     echo "Commands:"
+    echo "  (no args)            Launch web dashboard on http://localhost:8000"
     echo "  scan <ASSET>         Generate a signal (e.g. scan BTC, scan AAPL)"
     echo "  scan-all             Scan all configured assets"
     echo "  batch                Run scheduled batch scan"
@@ -74,13 +86,10 @@ if [ $# -eq 0 ]; then
     echo "  lint                 Run linter"
     echo ""
     echo "Examples:"
-    echo "  ./start.sh scan BTC              # crypto, no key needed"
-    echo "  ./start.sh scan AAPL             # US equity, no key needed"
-    echo "  ./start.sh scan NIFTY            # Indian F&O (needs chain)"
-    echo "  ./start.sh scan RELIANCE.NS      # Indian equity"
-    echo "  ./start.sh scan-all              # scan everything"
-    echo "  ./start.sh scan AAPL --llm       # use LLM for thesis"
-    echo "  ./start.sh dashboard             # open browser dashboard"
+    echo "  ./start.sh                     # launch dashboard"
+    echo "  ./start.sh scan BTC            # crypto, no key needed"
+    echo "  ./start.sh scan AAPL           # US equity, no key needed"
+    echo "  ./start.sh scan-all            # scan everything"
     echo ""
     echo "Optional env vars (all free tiers):"
     echo "  FRED_API_KEY        US macro data (https://fred.stlouisfed.org)"
