@@ -28,6 +28,7 @@ from pathlib import Path
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
 from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.analyzers.fno_oi import analyze_fno, oi_support_resistance
+from alpha_engine.analyzers.forex_trend import analyze_forex_trend
 from alpha_engine.analyzers.macd import analyze_macd
 from alpha_engine.analyzers.macro_context import analyze_macro
 from alpha_engine.analyzers.multi_timeframe import analyze_multi_timeframe
@@ -40,7 +41,7 @@ from alpha_engine.analyzers.volume import analyze_volume
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
 from alpha_engine.ingestion.breeze import BreezeLiveClient
-from alpha_engine.ingestion import binance, coingecko, coingecko_pro, fred, yahoo
+from alpha_engine.ingestion import binance, coingecko, coingecko_pro, fred, oanda, yahoo
 from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
 from alpha_engine.ingestion.indian_fno import load_indian_chain
 from alpha_engine.narrative.narrator import write_thesis
@@ -57,8 +58,9 @@ _IN_EQUITY_SUFFIXES = (".NS", ".BO")
 
 
 def detect_market(asset: str, override: str | None = None) -> Market:
-    """Mapped crypto symbols are crypto, known Indian indexes are F&O, and
-    everything else is a US equity ticker. Explicit --market always wins."""
+    """Mapped crypto symbols are crypto, known Indian indexes are F&O,
+    currency pairs (EURUSD, EUR/USD) are forex, and everything else is a US
+    equity ticker. Explicit --market always wins."""
     if override:
         return Market(override)
     asset = asset.upper()
@@ -68,6 +70,8 @@ def detect_market(asset: str, override: str | None = None) -> Market:
         return Market.IN_FNO
     if asset.endswith(_IN_EQUITY_SUFFIXES):
         return Market.IN_EQUITY
+    if oanda.supports(asset):
+        return Market.FOREX
     return Market.US_EQUITY
 
 
@@ -83,6 +87,9 @@ def _load_series(
     if series is None or ((stale or too_short) and not no_refresh):
         if market is Market.CRYPTO:
             series = _fetch_crypto_daily(asset, days, cache)
+        elif market is Market.FOREX:
+            print(f"[ingest] fetching {asset} daily from OANDA...", file=sys.stderr)
+            series = oanda.fetch_daily(asset, days=days, cache=cache)
         else:
             print(f"[ingest] fetching {asset} daily from Yahoo Finance...", file=sys.stderr)
             series = yahoo.fetch_daily(asset, days=days, cache=cache)
@@ -322,6 +329,8 @@ def _build_price_signal(
         sources.append(analyze_trend(series))
     elif market is Market.IN_EQUITY:
         sources.append(analyze_indian_equity(series))
+    elif market is Market.FOREX:
+        sources.append(analyze_forex_trend(series))
     else:
         sources.append(analyze_equity_trend(series))
 
@@ -599,6 +608,7 @@ def _add_market_args(sub: argparse.ArgumentParser, default_days: int) -> None:
             Market.US_EQUITY.value,
             Market.IN_EQUITY.value,
             Market.IN_FNO.value,
+            Market.FOREX.value,
         ],
         default=None,
         help="force the market instead of auto-detecting",

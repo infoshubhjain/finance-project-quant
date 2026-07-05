@@ -32,6 +32,7 @@ from pydantic import BaseModel
 from alpha_engine.analyzers.bollinger import analyze_bollinger
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
 from alpha_engine.analyzers.equity_trend import analyze_equity_trend
+from alpha_engine.analyzers.forex_trend import analyze_forex_trend
 from alpha_engine.analyzers.macd import analyze_macd
 from alpha_engine.analyzers.macro_context import analyze_macro
 from alpha_engine.analyzers.multi_timeframe import analyze_multi_timeframe
@@ -59,6 +60,7 @@ DEFAULT_WARMUP = 80
 _TREND_ANALYZER = {
     Market.CRYPTO: analyze_trend,
     Market.US_EQUITY: analyze_equity_trend,
+    Market.FOREX: analyze_forex_trend,
 }
 
 # Single-analyzer registry for per-analyzer calibration runs. Each entry is a
@@ -136,6 +138,8 @@ def signal_at(
         sources.append(analyze_trend(past))
     elif market is Market.IN_EQUITY:
         sources.append(analyze_indian_equity(past))
+    elif market is Market.FOREX:
+        sources.append(analyze_forex_trend(past))
     else:
         sources.append(analyze_equity_trend(past))
 
