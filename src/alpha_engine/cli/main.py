@@ -40,7 +40,7 @@ from alpha_engine.analyzers.volume import analyze_volume
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
 from alpha_engine.ingestion.breeze import BreezeLiveClient
-from alpha_engine.ingestion import coingecko, fred, yahoo
+from alpha_engine.ingestion import binance, coingecko, coingecko_pro, fred, yahoo
 from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
 from alpha_engine.ingestion.indian_fno import load_indian_chain
 from alpha_engine.narrative.narrator import write_thesis
@@ -81,13 +81,35 @@ def _load_series(
     series, stale = cache.get_price(asset, "1d")
     too_short = series is not None and len(series.candles) < (days * 3) // 5
     if series is None or ((stale or too_short) and not no_refresh):
-        source = "CoinGecko" if market is Market.CRYPTO else "Yahoo Finance"
-        print(f"[ingest] fetching {asset} daily from {source}...", file=sys.stderr)
-        fetcher = coingecko.fetch_daily if market is Market.CRYPTO else yahoo.fetch_daily
-        series = fetcher(asset, days=days, cache=cache)
+        if market is Market.CRYPTO:
+            series = _fetch_crypto_daily(asset, days, cache)
+        else:
+            print(f"[ingest] fetching {asset} daily from Yahoo Finance...", file=sys.stderr)
+            series = yahoo.fetch_daily(asset, days=days, cache=cache)
     else:
         print(f"[cache] using cached {asset} ({len(series.candles)} bars)", file=sys.stderr)
     return series
+
+
+def _fetch_crypto_daily(asset: str, days: int, cache: Cache) -> PriceSeries:
+    """Crypto fetch chain: CoinGecko Pro when a key exists, then keyless
+    CoinGecko, then the keyless Binance fallback.
+
+    Each step degrades loudly to the next so a CoinGecko 429 (rate limit)
+    never kills a scan, and the last error propagates honestly if every
+    source fails."""
+    if coingecko_pro.has_key():
+        try:
+            print(f"[ingest] fetching {asset} daily from CoinGecko Pro...", file=sys.stderr)
+            return coingecko_pro.fetch_daily(asset, days=days, cache=cache)
+        except Exception as e:  # noqa: BLE001 - fall back to the keyless tier
+            print(f"[ingest] CoinGecko Pro failed ({e}); trying keyless tier", file=sys.stderr)
+    try:
+        print(f"[ingest] fetching {asset} daily from CoinGecko...", file=sys.stderr)
+        return coingecko.fetch_daily(asset, days=days, cache=cache)
+    except Exception as e:  # noqa: BLE001 - fall back to Binance
+        print(f"[ingest] CoinGecko failed ({e}); falling back to Binance", file=sys.stderr)
+    return binance.fetch_daily(asset, days=days, cache=cache)
 
 
 def _load_macro(cache: Cache, no_refresh: bool) -> dict[str, list[MacroObservation]]:
