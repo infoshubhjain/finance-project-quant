@@ -163,6 +163,78 @@ function renderOutcomes(o) {
   el.innerHTML = html;
 }
 
+// ---- portfolio view ---------------------------------------------------------
+
+function corrColor(v) {
+  // Diverging encoding: blue for positive co-movement, red for negative,
+  // neutral surface near zero. Values are always printed in the cell, so
+  // color never carries the number alone.
+  if (v == null) return "transparent";
+  const alpha = Math.min(Math.abs(v), 1) * 0.55;
+  return v >= 0 ? `rgba(57,135,229,${alpha})` : `rgba(230,103,103,${alpha})`;
+}
+
+function renderPortfolio(p) {
+  const el = document.getElementById("portfolio");
+  if (!p || p.signal_count === 0) {
+    el.innerHTML = '<div class="chart-empty">No signals recorded yet</div>';
+    return;
+  }
+
+  const dirCls = dirClass(p.direction);
+  let html = '<div class="portfolio-grid">';
+
+  // Left column: positioning numbers
+  html += '<div>';
+  html += `<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+    ${pill(p.direction, dirCls)}
+    <span style="font-family:var(--mono);font-size:22px;font-weight:700;">${(p.net_bias * 100).toFixed(0)}%</span>
+    <span style="color:var(--muted);font-size:12px;">net bias (confidence-weighted)</span>
+  </div>`;
+  if (p.diversification_score != null) {
+    html += `<div style="margin-bottom:10px;">
+      <span style="font-family:var(--mono);font-size:16px;font-weight:600;">${(p.diversification_score * 100).toFixed(0)}%</span>
+      <span style="color:var(--muted);font-size:12px;"> diversification (100% = uncorrelated wiggles)</span>
+    </div>`;
+  }
+  const weights = Object.entries(p.conviction_weights || {});
+  if (weights.length) {
+    html += '<div class="label" style="margin:10px 0 6px;">Conviction share</div>';
+    weights.sort((a, b) => b[1] - a[1]).forEach(([asset, w]) => {
+      html += `<div class="bar-row">
+        <div class="bar-name">${esc(asset)}</div>
+        <div class="bar-track"><div class="bar-fill" style="width:${(w * 100).toFixed(1)}%;background:#3987e5;"></div></div>
+        <div class="bar-value">${(w * 100).toFixed(0)}%</div>
+      </div>`;
+    });
+  }
+  (p.concentration_flags || []).forEach((f) => {
+    html += `<div class="alert">&#9888; ${esc(f)}</div>`;
+  });
+  html += "</div>";
+
+  // Right column: correlation matrix
+  const m = p.correlations;
+  if (m && m.assets && m.assets.length >= 2) {
+    html += '<div><div class="label" style="margin-bottom:6px;">Return correlation (' + m.window + "d)</div>";
+    html += '<div class="table-wrap"><table class="corr-table"><thead><tr><th></th>';
+    m.assets.forEach((a) => (html += `<th>${esc(a)}</th>`));
+    html += "</tr></thead><tbody>";
+    m.assets.forEach((a, i) => {
+      html += `<tr><th>${esc(a)}</th>`;
+      m.matrix[i].forEach((v) => {
+        const txt = v == null ? "–" : v.toFixed(2);
+        html += `<td style="background:${corrColor(v)};">${txt}</td>`;
+      });
+      html += "</tr>";
+    });
+    html += "</tbody></table></div></div>";
+  }
+
+  html += "</div>";
+  el.innerHTML = html;
+}
+
 // ---- signal feed -----------------------------------------------------------
 
 function renderSignals(signals) {
@@ -263,6 +335,7 @@ function render(payload) {
   renderMarkets(payload.assets_by_market);
   renderCalibration(o.calibration);
   renderOutcomes(o);
+  renderPortfolio(payload.portfolio);
   renderSignals(payload.latest_signals);
 }
 

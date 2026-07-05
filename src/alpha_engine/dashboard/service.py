@@ -16,7 +16,9 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+from alpha_engine.analyzers.portfolio_signal import build_portfolio_view
 from alpha_engine.cache.interface import Cache
+from alpha_engine.cache.models import PriceSeries
 from alpha_engine.validation.outcomes import score_record, summarize_outcomes
 from alpha_engine.validation.recorder import SignalRecord, read_records
 
@@ -59,6 +61,15 @@ def build_dashboard_payload(
         for record in latest:
             by_market[record.signal.market.value] += 1
 
+        # Portfolio view: aggregate the latest signal per asset, with return
+        # correlations for the assets whose prices are cached.
+        series_by_asset: dict[str, PriceSeries] = {}
+        for record in latest:
+            series, _stale = cache.get_price(record.signal.asset, "1d")
+            if series is not None:
+                series_by_asset[record.signal.asset] = series
+        portfolio = build_portfolio_view([r.signal for r in latest], series_by_asset)
+
         return {
             "total_records": len(records),
             "latest_count": len(latest),
@@ -81,6 +92,7 @@ def build_dashboard_payload(
                 for record in latest
             ],
             "outcomes": summarize_outcomes(scored).model_dump(mode="json"),
+            "portfolio": portfolio.model_dump(mode="json"),
         }
 
 
