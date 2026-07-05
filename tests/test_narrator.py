@@ -190,6 +190,7 @@ def test_rewrite_thesis_falls_back_on_http_failure(monkeypatch):
         raise ConnectionError("no network")
 
     import alpha_engine.narrative.llm as llm_mod
+
     monkeypatch.setattr(llm_mod.requests, "post", fake_post)
 
     sig = _signal()
@@ -202,8 +203,10 @@ def test_rewrite_thesis_falls_back_on_malformed_response(monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def raise_for_status(self) -> None:
             pass
+
         def json(self) -> dict:
             return {"unexpected": "shape"}
 
@@ -211,6 +214,7 @@ def test_rewrite_thesis_falls_back_on_malformed_response(monkeypatch):
         return FakeResponse()
 
     import alpha_engine.narrative.llm as llm_mod
+
     monkeypatch.setattr(llm_mod.requests, "post", fake_post)
 
     sig = _signal()
@@ -230,19 +234,18 @@ def test_rewrite_thesis_rejects_llm_output_that_changes_numbers(monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def raise_for_status(self) -> None:
             pass
+
         def json(self) -> dict:
-            return {
-                "choices": [
-                    {"message": {"content": "rephrased thesis"}}
-                ]
-            }
+            return {"choices": [{"message": {"content": "rephrased thesis"}}]}
 
     def fake_post(*args: Any, **kwargs: Any) -> FakeResponse:
         return FakeResponse()
 
     import alpha_engine.narrative.llm as llm_mod
+
     monkeypatch.setattr(llm_mod.requests, "post", fake_post)
 
     # Simulate a pipeline bug: after the LLM call, the candidate signal
@@ -268,8 +271,10 @@ def test_rewrite_thesis_accepts_llm_output_that_only_rephrases(monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def raise_for_status(self) -> None:
             pass
+
         def json(self) -> dict:
             return {"choices": [{"message": {"content": good_thesis}}]}
 
@@ -277,6 +282,7 @@ def test_rewrite_thesis_accepts_llm_output_that_only_rephrases(monkeypatch):
         return FakeResponse()
 
     import alpha_engine.narrative.llm as llm_mod
+
     monkeypatch.setattr(llm_mod.requests, "post", fake_post)
 
     sig = _signal()
@@ -294,8 +300,10 @@ def test_rewrite_thesis_uses_custom_model_and_api_base(monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def raise_for_status(self) -> None:
             pass
+
         def json(self) -> dict:
             return {"choices": [{"message": {"content": "rephrased"}}]}
 
@@ -305,6 +313,7 @@ def test_rewrite_thesis_uses_custom_model_and_api_base(monkeypatch):
         return FakeResponse()
 
     import alpha_engine.narrative.llm as llm_mod
+
     monkeypatch.setattr(llm_mod.requests, "post", fake_post)
 
     sig = _signal()
@@ -322,6 +331,7 @@ def test_write_thesis_with_llm_false_never_calls_llm(monkeypatch):
         raise AssertionError("LLM should not be called when use_llm=False")
 
     import alpha_engine.narrative.llm as llm_mod
+
     monkeypatch.setattr(llm_mod.requests, "post", fail_post)
 
     sig = _signal()

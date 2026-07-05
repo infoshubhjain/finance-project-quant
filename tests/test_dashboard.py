@@ -57,7 +57,11 @@ def test_build_dashboard_payload_scores_records(tmp_path):
         timestamp=base,
     )
     record_signal(signal, entry_price=100.0, root=signals_root)
-    cache.put_price(_series("BTC", base + timedelta(days=1), [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]))
+    cache.put_price(
+        _series(
+            "BTC", base + timedelta(days=1), [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]
+        )
+    )
 
     payload = build_dashboard_payload(records_root=signals_root, cache=cache)
     assert payload["total_records"] == 1

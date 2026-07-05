@@ -122,9 +122,7 @@ def _parse_option_chain(raw: Any, underlying: str) -> dict[str, Any]:
     return {"underlying": underlying, "records": [], **data}
 
 
-def _parse_aggregated(
-    items: list[dict], underlying: str, meta: dict
-) -> dict[str, Any]:
+def _parse_aggregated(items: list[dict], underlying: str, meta: dict) -> dict[str, Any]:
     """Parse the 'gregated' format where each entry has strike + CE + PE."""
     records = []
     for item in items:
@@ -137,7 +135,9 @@ def _parse_aggregated(
             if opt and isinstance(opt, dict):
                 record[right_label] = {
                     "openInterest": opt.get("openInterest", opt.get("oi", 0)),
-                    "changeinOpenInterest": opt.get("changeinOpenInterest", opt.get("oi_change", 0)),
+                    "changeinOpenInterest": opt.get(
+                        "changeinOpenInterest", opt.get("oi_change", 0)
+                    ),
                     "totalTradedVolume": opt.get("totalTradedVolume", opt.get("volume", 0)),
                     "lastPrice": opt.get("lastPrice", opt.get("ltp", 0)),
                 }
@@ -145,9 +145,7 @@ def _parse_aggregated(
     return {"underlying": underlying, "records": records, **meta}
 
 
-def _parse_ce_pe_split(
-    data: dict, underlying: str
-) -> dict[str, Any]:
+def _parse_ce_pe_split(data: dict, underlying: str) -> dict[str, Any]:
     """Parse a format with separate strike_ce and strike_pe lists."""
     ce_list = data.get("strike_ce", [])
     pe_list = data.get("strike_pe", [])
@@ -180,9 +178,7 @@ def _parse_ce_pe_split(
     return {"underlying": underlying, "records": records}
 
 
-def _parse_strike_list(
-    items: list[dict], underlying: str, meta: dict
-) -> dict[str, Any]:
+def _parse_strike_list(items: list[dict], underlying: str, meta: dict) -> dict[str, Any]:
     """Parse a flat list where each entry may be a single option or a pair."""
     records = []
     for item in items:
@@ -195,7 +191,9 @@ def _parse_strike_list(
             if opt and isinstance(opt, dict):
                 record[right_label] = {
                     "openInterest": opt.get("openInterest", opt.get("oi", 0)),
-                    "changeinOpenInterest": opt.get("changeinOpenInterest", opt.get("oi_change", 0)),
+                    "changeinOpenInterest": opt.get(
+                        "changeinOpenInterest", opt.get("oi_change", 0)
+                    ),
                     "totalTradedVolume": opt.get("totalTradedVolume", opt.get("volume", 0)),
                     "lastPrice": opt.get("lastPrice", opt.get("ltp", 0)),
                 }

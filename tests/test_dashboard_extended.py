@@ -108,7 +108,13 @@ def test_payload_includes_latest_signal_details(tmp_path):
     signal = _signal(asset="BTC", confidence=0.85, timestamp=base)
     signal = write_thesis(signal)  # narrative layer fills thesis before recording
     record_signal(signal, entry_price=60000.0, root=str(signals_root))
-    cache.put_price(_series("BTC", base + timedelta(days=1), [60100, 60200, 60300, 60400, 60500, 60600, 60700, 60800, 60900, 61000, 61100]))
+    cache.put_price(
+        _series(
+            "BTC",
+            base + timedelta(days=1),
+            [60100, 60200, 60300, 60400, 60500, 60600, 60700, 60800, 60900, 61000, 61100],
+        )
+    )
 
     payload = build_dashboard_payload(records_root=str(signals_root), cache=cache)
     sig = payload["latest_signals"][0]
@@ -125,9 +131,21 @@ def test_payload_groups_assets_by_market(tmp_path):
     signals_root.mkdir()
     cache = Cache(store=LocalStore(root=tmp_path / "cache"))
     base = datetime(2024, 4, 1, tzinfo=timezone.utc)
-    record_signal(_signal(asset="BTC", market=Market.CRYPTO, timestamp=base), entry_price=100, root=str(signals_root))
-    record_signal(_signal(asset="ETH", market=Market.CRYPTO, timestamp=base), entry_price=200, root=str(signals_root))
-    record_signal(_signal(asset="AAPL", market=Market.US_EQUITY, timestamp=base), entry_price=150, root=str(signals_root))
+    record_signal(
+        _signal(asset="BTC", market=Market.CRYPTO, timestamp=base),
+        entry_price=100,
+        root=str(signals_root),
+    )
+    record_signal(
+        _signal(asset="ETH", market=Market.CRYPTO, timestamp=base),
+        entry_price=200,
+        root=str(signals_root),
+    )
+    record_signal(
+        _signal(asset="AAPL", market=Market.US_EQUITY, timestamp=base),
+        entry_price=150,
+        root=str(signals_root),
+    )
 
     payload = build_dashboard_payload(records_root=str(signals_root), cache=cache)
     assert payload["assets_by_market"]["crypto"] == 2
@@ -143,7 +161,11 @@ def test_payload_outcomes_scoring(tmp_path):
     signal = _signal(asset="BTC", direction=Direction.BULLISH, confidence=0.8, timestamp=base)
     record_signal(signal, entry_price=100.0, root=str(signals_root))
     # Price rises over 10 bars -> bullish hit
-    cache.put_price(_series("BTC", base + timedelta(days=1), [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]))
+    cache.put_price(
+        _series(
+            "BTC", base + timedelta(days=1), [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]
+        )
+    )
 
     payload = build_dashboard_payload(records_root=str(signals_root), cache=cache)
     assert payload["outcomes"]["resolved"] == 1

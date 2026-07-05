@@ -27,15 +27,12 @@ def _template_thesis(signal: Signal) -> str:
 
     if signal.signal_sources:
         contribs = ", ".join(
-            f"{s.name} ({s.direction.value}, w={s.weight:.2f})"
-            for s in signal.signal_sources
+            f"{s.name} ({s.direction.value}, w={s.weight:.2f})" for s in signal.signal_sources
         )
         parts.append(f"Contributing inputs: {contribs}.")
 
     if signal.invalidation_level is not None:
-        parts.append(
-            f"The thesis is invalidated below/above {signal.invalidation_level:.2f}."
-        )
+        parts.append(f"The thesis is invalidated below/above {signal.invalidation_level:.2f}.")
 
     parts.append("Research output only, not investment advice.")
     return " ".join(parts)

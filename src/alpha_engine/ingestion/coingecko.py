@@ -45,9 +45,7 @@ def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> Price
     asset = asset.upper()
     coin_id = _COINGECKO_IDS.get(asset)
     if coin_id is None:
-        raise ValueError(
-            f"{asset} not mapped to a CoinGecko id. Add it to _COINGECKO_IDS."
-        )
+        raise ValueError(f"{asset} not mapped to a CoinGecko id. Add it to _COINGECKO_IDS.")
 
     # /market_chart returns dense daily points: {"prices": [[ts_ms, price], ...]}.
     # The keyless /ohlc endpoint is too sparse for multi-bar moving averages, so we

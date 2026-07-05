@@ -103,7 +103,9 @@ def analyze_volume(
         obv_trend = obv_series[-1] - obv_sma
 
     # Price trend
-    price_trend = closes[-1] - closes[-vol_lookback] if len(closes) > vol_lookback else closes[-1] - closes[0]
+    price_trend = (
+        closes[-1] - closes[-vol_lookback] if len(closes) > vol_lookback else closes[-1] - closes[0]
+    )
 
     # Volume momentum: recent volume vs average
     recent_window = safe_volumes[-vol_lookback:]
@@ -138,10 +140,7 @@ def analyze_volume(
 
     weight = round(max(min(strength, 1.0), 0.0), 4)
 
-    detail = (
-        f"obv_trend={'+'if obv_trend>0 else ''}{obv_trend:.0f} "
-        f"vol_ratio={vol_ratio:.2f}"
-    )
+    detail = f"obv_trend={'+' if obv_trend > 0 else ''}{obv_trend:.0f} vol_ratio={vol_ratio:.2f}"
     if abs(obv_trend) > 0 and price_trend > 0 and obv_trend > 0:
         detail += " [confirmed_uptrend]"
     elif abs(obv_trend) > 0 and price_trend < 0 and obv_trend < 0:

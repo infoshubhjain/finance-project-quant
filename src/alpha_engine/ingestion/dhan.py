@@ -117,9 +117,7 @@ def _parse_option_chain(raw: Any, underlying: str) -> dict[str, Any]:
     return {"underlying": underlying, "records": [], **data}
 
 
-def _parse_option_chain_list(
-    items: list[dict], underlying: str, meta: dict
-) -> dict[str, Any]:
+def _parse_option_chain_list(items: list[dict], underlying: str, meta: dict) -> dict[str, Any]:
     """Parse Dhan's optionChain format where each entry has strike + CE + PE."""
     records = []
     for item in items:
@@ -132,7 +130,9 @@ def _parse_option_chain_list(
             if opt and isinstance(opt, dict):
                 record[right_label] = {
                     "openInterest": opt.get("openInterest", opt.get("oi", 0)),
-                    "changeinOpenInterest": opt.get("changeinOpenInterest", opt.get("oi_change", 0)),
+                    "changeinOpenInterest": opt.get(
+                        "changeinOpenInterest", opt.get("oi_change", 0)
+                    ),
                     "totalTradedVolume": opt.get("totalTradedVolume", opt.get("volume", 0)),
                     "lastPrice": opt.get("lastPrice", opt.get("ltp", 0)),
                 }
@@ -146,9 +146,7 @@ def _parse_option_chain_list(
     return result
 
 
-def _parse_strike_list(
-    items: list[dict], underlying: str, meta: dict
-) -> dict[str, Any]:
+def _parse_strike_list(items: list[dict], underlying: str, meta: dict) -> dict[str, Any]:
     """Parse a flat list where each entry may be a single option or a pair."""
     records = []
     for item in items:
@@ -161,7 +159,9 @@ def _parse_strike_list(
             if opt and isinstance(opt, dict):
                 record[right_label] = {
                     "openInterest": opt.get("openInterest", opt.get("oi", 0)),
-                    "changeinOpenInterest": opt.get("changeinOpenInterest", opt.get("oi_change", 0)),
+                    "changeinOpenInterest": opt.get(
+                        "changeinOpenInterest", opt.get("oi_change", 0)
+                    ),
                     "totalTradedVolume": opt.get("totalTradedVolume", opt.get("volume", 0)),
                     "lastPrice": opt.get("lastPrice", opt.get("ltp", 0)),
                 }

@@ -43,9 +43,7 @@ class CalibrationCurve(BaseModel):
             return raw_confidence
 
         for bin in self.bins:
-            if bin.lo <= raw_confidence < bin.hi or (
-                bin.hi == 1.0 and raw_confidence == 1.0
-            ):
+            if bin.lo <= raw_confidence < bin.hi or (bin.hi == 1.0 and raw_confidence == 1.0):
                 if bin.hit_rate is not None:
                     return bin.hit_rate
                 # Bin exists but no data yet — return raw

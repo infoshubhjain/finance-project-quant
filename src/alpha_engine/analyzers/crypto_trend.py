@@ -76,9 +76,7 @@ def analyze_trend(
     if mom is not None:
         detail += f" mom={mom:.4f}"
 
-    return SignalSource(
-        name="crypto.trend", direction=direction, weight=weight, detail=detail
-    )
+    return SignalSource(name="crypto.trend", direction=direction, weight=weight, detail=detail)
 
 
 def trend_invalidation(

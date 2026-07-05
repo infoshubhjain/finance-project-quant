@@ -86,9 +86,7 @@ def _agreement_quality(sources: list[SignalSource], direction: Direction) -> flo
     total_weight = sum(s.weight for s in sources)
     if total_weight == 0:
         return 0.0
-    agreeing_weight = sum(
-        s.weight for s in sources if s.direction is direction
-    )
+    agreeing_weight = sum(s.weight for s in sources if s.direction is direction)
     return agreeing_weight / total_weight
 
 
@@ -105,8 +103,7 @@ def _reliability_score(sources: list[SignalSource], direction: Direction) -> flo
     if total_weight == 0:
         return 0.0
     weighted_reliability = sum(
-        s.weight * SOURCE_RELIABILITY.get(s.name, _DEFAULT_RELIABILITY)
-        for s in agreeing
+        s.weight * SOURCE_RELIABILITY.get(s.name, _DEFAULT_RELIABILITY) for s in agreeing
     )
     return weighted_reliability / total_weight
 

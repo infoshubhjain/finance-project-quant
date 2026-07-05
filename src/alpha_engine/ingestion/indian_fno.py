@@ -38,7 +38,11 @@ def _parse_datetime(raw: object) -> datetime:
             parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
         except ValueError as e:
             raise ValueError(f"unsupported datetime value: {raw!r}") from e
-        return parsed.astimezone(timezone.utc) if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        return (
+            parsed.astimezone(timezone.utc)
+            if parsed.tzinfo
+            else parsed.replace(tzinfo=timezone.utc)
+        )
     raise ValueError(f"unsupported datetime value: {raw!r}")
 
 
@@ -124,7 +128,12 @@ def parse_indian_chain_payload(payload: dict, underlying: str | None = None) -> 
         spot_raw = payload.get("underlyingValue") or payload.get("ltp") or payload.get("spotPrice")
     spot = _number(spot_raw, "spot") if spot_raw is not None else None
 
-    rows = payload.get("records") or payload.get("data") or payload.get("options") or payload.get("chain")
+    rows = (
+        payload.get("records")
+        or payload.get("data")
+        or payload.get("options")
+        or payload.get("chain")
+    )
     if not isinstance(rows, list):
         raise ValueError("payload does not contain an options row list")
 

@@ -183,7 +183,7 @@ def test_obv_basic():
     assert len(obv) == 4
     assert obv[0] == 0.0
     assert obv[1] == 200.0  # up -> +vol
-    assert obv[2] == 50.0   # down -> -vol
+    assert obv[2] == 50.0  # down -> -vol
     assert obv[3] == 350.0  # up -> +vol
 
 

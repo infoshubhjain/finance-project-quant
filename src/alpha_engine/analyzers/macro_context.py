@@ -101,6 +101,4 @@ def analyze_macro(data: dict[str, list[MacroObservation]]) -> SignalSource:
     weight = round(min(abs(score), 1.0) * MAX_WEIGHT, 4)
     detail = " ".join(notes) + f" score={score:+.2f}"
 
-    return SignalSource(
-        name="macro.context", direction=direction, weight=weight, detail=detail
-    )
+    return SignalSource(name="macro.context", direction=direction, weight=weight, detail=detail)

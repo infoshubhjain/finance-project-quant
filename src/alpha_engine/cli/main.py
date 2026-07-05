@@ -127,7 +127,14 @@ def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace, use_llm: bool 
     return _scan_fno_chain(asset, chain, stale, cache, args, use_llm=use_llm)
 
 
-def _scan_fno_chain(asset: str, chain: OptionsChain, stale: bool, cache: Cache, args: argparse.Namespace, use_llm: bool = False) -> int:
+def _scan_fno_chain(
+    asset: str,
+    chain: OptionsChain,
+    stale: bool,
+    cache: Cache,
+    args: argparse.Namespace,
+    use_llm: bool = False,
+) -> int:
     """Run the deterministic F&O pipeline on a normalized chain."""
     if stale:
         print(
@@ -261,7 +268,11 @@ def cmd_scan(args: argparse.Namespace) -> int:
 
 
 def _build_price_signal(
-    asset: str, market: Market, series: PriceSeries, cache: Cache, no_refresh: bool,
+    asset: str,
+    market: Market,
+    series: PriceSeries,
+    cache: Cache,
+    no_refresh: bool,
     use_llm: bool = False,
 ) -> Signal:
     """Build the deterministic price-series signal for crypto or equities.
@@ -390,7 +401,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
                     )
             else:
                 series = _load_series(asset, market, args.days, args.no_refresh, cache)
-                signal = _build_price_signal(asset, market, series, cache, args.no_refresh, use_llm=use_llm)
+                signal = _build_price_signal(
+                    asset, market, series, cache, args.no_refresh, use_llm=use_llm
+                )
                 status = "stale" if cache.get_price(asset, "1d")[1] else "ok"
                 if args.record:
                     entry = series.candles[-1].close if series.candles else None
@@ -482,7 +495,9 @@ def cmd_scan_all(args: argparse.Namespace) -> int:
     print(f"[scan-all] scanning {len(config.targets)} assets...", file=sys.stderr)
     report = run_batch(config)
 
-    print(f"\n[scan-all] done: {report.ok}/{report.total} ok, {report.errors} errors", file=sys.stderr)
+    print(
+        f"\n[scan-all] done: {report.ok}/{report.total} ok, {report.errors} errors", file=sys.stderr
+    )
     print(json.dumps(report.summary(), indent=2))
     return 0 if report.errors == 0 else 1
 
@@ -522,6 +537,7 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
 
     try:
         from web.server import main as web_main
+
         return web_main([f"--host={host}", f"--port={port}"])
     except ImportError:
         print(
@@ -536,7 +552,12 @@ def _add_market_args(sub: argparse.ArgumentParser, default_days: int) -> None:
     sub.add_argument("asset", help="symbol, e.g. BTC, ETH, AAPL, NIFTY")
     sub.add_argument(
         "--market",
-        choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_EQUITY.value, Market.IN_FNO.value],
+        choices=[
+            Market.CRYPTO.value,
+            Market.US_EQUITY.value,
+            Market.IN_EQUITY.value,
+            Market.IN_FNO.value,
+        ],
         default=None,
         help="force the market instead of auto-detecting",
     )
@@ -545,13 +566,17 @@ def _add_market_args(sub: argparse.ArgumentParser, default_days: int) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="alpha-engine", description="Open research engine for market signals.")
+    p = argparse.ArgumentParser(
+        prog="alpha-engine", description="Open research engine for market signals."
+    )
     sub = p.add_subparsers(dest="command", required=True)
 
     scan = sub.add_parser("scan", help="generate a signal for one asset")
     _add_market_args(scan, default_days=90)
     scan.add_argument("--no-record", action="store_true", help="do not append to the signal log")
-    scan.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis (needs LLM_API_KEY)")
+    scan.add_argument(
+        "--llm", action="store_true", help="use optional LLM to rephrase thesis (needs LLM_API_KEY)"
+    )
     scan.set_defaults(func=cmd_scan)
 
     scan_chain = sub.add_parser(
@@ -564,7 +589,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="override the underlying symbol when the raw payload omits it",
     )
-    scan_chain.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    scan_chain.add_argument(
+        "--no-record", action="store_true", help="do not append to the signal log"
+    )
     scan_chain.set_defaults(func=cmd_scan_chain)
 
     fetch_chain = sub.add_parser(
@@ -583,7 +610,9 @@ def build_parser() -> argparse.ArgumentParser:
         default="breeze",
         help="broker to fetch from (default: breeze)",
     )
-    fetch_chain.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    fetch_chain.add_argument(
+        "--no-record", action="store_true", help="do not append to the signal log"
+    )
     fetch_chain.set_defaults(func=cmd_fetch_chain)
 
     watch = sub.add_parser(
@@ -591,11 +620,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="scan multiple assets and print a compact table",
     )
     watch.add_argument("assets", nargs="+", help="symbols to scan, e.g. BTC AAPL NIFTY")
-    watch.add_argument("--market", choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_FNO.value], default=None, help="force one market for every asset")
+    watch.add_argument(
+        "--market",
+        choices=[Market.CRYPTO.value, Market.US_EQUITY.value, Market.IN_FNO.value],
+        default=None,
+        help="force one market for every asset",
+    )
     watch.add_argument("--days", type=int, default=90, help="history window to fetch")
     watch.add_argument("--no-refresh", action="store_true", help="use cache even if stale")
     watch.add_argument("--record", action="store_true", help="append results to the signal log")
-    watch.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis (needs LLM_API_KEY)")
+    watch.add_argument(
+        "--llm", action="store_true", help="use optional LLM to rephrase thesis (needs LLM_API_KEY)"
+    )
     watch.add_argument(
         "--sort",
         choices=["asset", "market", "confidence"],
@@ -614,9 +650,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     scan_all = sub.add_parser("scan-all", help="scan all configured assets across all markets")
     scan_all.add_argument("--config", default=None, help="path to portfolio.json config file")
-    scan_all.add_argument("--assets", nargs="+", default=None, help="explicit asset list, e.g. BTC AAPL NIFTY")
+    scan_all.add_argument(
+        "--assets", nargs="+", default=None, help="explicit asset list, e.g. BTC AAPL NIFTY"
+    )
     scan_all.add_argument("--days", type=int, default=90, help="history window to fetch")
-    scan_all.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    scan_all.add_argument(
+        "--no-record", action="store_true", help="do not append to the signal log"
+    )
     scan_all.add_argument("--llm", action="store_true", help="use optional LLM to rephrase thesis")
     scan_all.set_defaults(func=cmd_scan_all)
 

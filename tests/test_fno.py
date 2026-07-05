@@ -343,9 +343,7 @@ def test_fetch_chain_uses_breeze_client_and_caches_chain(tmp_path, monkeypatch, 
     monkeypatch.setattr(cli_main, "Cache", lambda: cache)
     monkeypatch.setattr(cli_main, "BreezeLiveClient", FakeBreezeClient)
 
-    rc = cli_main.cmd_fetch_chain(
-        Namespace(asset="NIFTY", expiry="2026-07-30", no_record=True)
-    )
+    rc = cli_main.cmd_fetch_chain(Namespace(asset="NIFTY", expiry="2026-07-30", no_record=True))
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -368,9 +366,7 @@ def test_fetch_chain_reports_missing_credentials(tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(cli_main, "Cache", lambda: cache)
     monkeypatch.setattr(cli_main, "BreezeLiveClient", FakeMissingClient)
 
-    rc = cli_main.cmd_fetch_chain(
-        Namespace(asset="NIFTY", expiry="2026-07-30", no_record=True)
-    )
+    rc = cli_main.cmd_fetch_chain(Namespace(asset="NIFTY", expiry="2026-07-30", no_record=True))
 
     assert rc == 1
     err = capsys.readouterr().err

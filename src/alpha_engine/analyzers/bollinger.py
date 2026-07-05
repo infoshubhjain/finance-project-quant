@@ -107,10 +107,7 @@ def analyze_bollinger(
 
     weight = round(max(weight, 0.0), 4)
 
-    detail = (
-        f"bb({period},{num_std:.0f}) %b={pct_b:.3f} "
-        f"band_w={band_width:.4f}"
-    )
+    detail = f"bb({period},{num_std:.0f}) %b={pct_b:.3f} band_w={band_width:.4f}"
     if is_squeeze:
         detail += " [squeeze]"
     if pct_b < 0:

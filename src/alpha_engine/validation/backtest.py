@@ -63,7 +63,9 @@ class BacktestReport(BaseModel):
 
 
 def signal_at(
-    series: PriceSeries, t: int, market: Market = Market.CRYPTO,
+    series: PriceSeries,
+    t: int,
+    market: Market = Market.CRYPTO,
     timeframe: Timeframe = Timeframe.SWING,
 ) -> tuple[Signal, float]:
     """Generate the signal the engine WOULD have emitted at bar index t, seeing

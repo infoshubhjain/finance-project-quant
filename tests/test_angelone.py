@@ -172,8 +172,10 @@ def test_fetch_chain_normalizes_response(monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def raise_for_status(self) -> None:
             pass
+
         def json(self) -> dict:
             return api_response
 
@@ -181,6 +183,7 @@ def test_fetch_chain_normalizes_response(monkeypatch):
         return FakeResponse()
 
     import alpha_engine.ingestion.angelone as angelone_mod
+
     monkeypatch.setattr(angelone_mod.requests, "get", fake_get)
 
     client = AngelOneLiveClient.from_env()
@@ -200,12 +203,23 @@ def test_fetch_chain_calls_correct_url(monkeypatch):
 
     class FakeResponse:
         status_code = 200
+
         def raise_for_status(self) -> None:
             pass
+
         def json(self) -> dict:
-            return {"data": {"expiry": "30JUL2026", "records": [
-                {"strikePrice": 20000, "CE": {"openInterest": 100}, "PE": {"openInterest": 200}}
-            ]}}
+            return {
+                "data": {
+                    "expiry": "30JUL2026",
+                    "records": [
+                        {
+                            "strikePrice": 20000,
+                            "CE": {"openInterest": 100},
+                            "PE": {"openInterest": 200},
+                        }
+                    ],
+                }
+            }
 
     def fake_get(url: str, **kwargs: Any) -> FakeResponse:
         captured["url"] = url
@@ -214,6 +228,7 @@ def test_fetch_chain_calls_correct_url(monkeypatch):
         return FakeResponse()
 
     import alpha_engine.ingestion.angelone as angelone_mod
+
     monkeypatch.setattr(angelone_mod.requests, "get", fake_get)
 
     client = AngelOneLiveClient.from_env()
@@ -255,9 +270,8 @@ def test_retry_recovers_after_429(monkeypatch):
     responses = [_StubResponse(429), _StubResponse(429), _StubResponse(200)]
 
     import alpha_engine.ingestion.angelone as angelone_mod
-    monkeypatch.setattr(
-        angelone_mod.requests, "get", lambda url, **kw: responses.pop(0)
-    )
+
+    monkeypatch.setattr(angelone_mod.requests, "get", lambda url, **kw: responses.pop(0))
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 200
@@ -273,6 +287,7 @@ def test_retry_gives_up_after_max_attempts(monkeypatch):
         return _StubResponse(429)
 
     import alpha_engine.ingestion.angelone as angelone_mod
+
     monkeypatch.setattr(angelone_mod.requests, "get", always_429)
 
     resp = _get_with_retry("http://x", params={}, headers={})
@@ -286,9 +301,8 @@ def test_retry_honors_retry_after_header(monkeypatch):
     responses = [_StubResponse(429, headers={"Retry-After": "7"}), _StubResponse(200)]
 
     import alpha_engine.ingestion.angelone as angelone_mod
-    monkeypatch.setattr(
-        angelone_mod.requests, "get", lambda url, **kw: responses.pop(0)
-    )
+
+    monkeypatch.setattr(angelone_mod.requests, "get", lambda url, **kw: responses.pop(0))
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 200
@@ -299,9 +313,8 @@ def test_retry_does_not_retry_client_errors(monkeypatch):
     waits = _patch_sleep(monkeypatch)
 
     import alpha_engine.ingestion.angelone as angelone_mod
-    monkeypatch.setattr(
-        angelone_mod.requests, "get", lambda url, **kw: _StubResponse(401)
-    )
+
+    monkeypatch.setattr(angelone_mod.requests, "get", lambda url, **kw: _StubResponse(401))
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 401  # bad credentials should fail fast, not retry
