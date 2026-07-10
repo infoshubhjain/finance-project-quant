@@ -104,13 +104,17 @@ src/alpha_engine/
   analyzers/crypto_trend.py First deterministic analyzer (dual-MA trend + momentum).
   analyzers/equity_trend.py Equity price structure; delegates to trend core for now.
   analyzers/macro_context.py Tightening/easing posture as a capped contextual tilt.
+  quant/features.py         ~50 deterministic features (returns, trend, vol, volume, stats).
+  quant/models.py           Kalman fair value, GARCH(1,1) vol, 2-state HMM regime — pure Python.
+  quant/report.py           Scored quant report + indicators (ADX, Keltner, volume profile).
   synthesis/synthesize.py   Weighted-vote synthesis into a Signal.
   narrative/narrator.py     Templated thesis; optional-LLM hook.
   validation/recorder.py    Append-only JSONL signal log (data/signals/). Never mutates.
   validation/outcomes.py    Scores signals vs. later prices; calibration summary.
   validation/backtest.py    No-lookahead replay; `signal_at` is the truncation choke point.
-  cli/main.py               `scan`, `backtest`, `record-stats` entry points.
+  cli/main.py               `scan`, `report`, `backtest`, `record-stats` entry points.
 tests/test_core.py          Determinism + schema validation tests.
+tests/test_quant.py         Feature/model/report determinism and edge-case tests.
 tests/test_validation.py    Recorder immutability, scoring rules, no-lookahead pin.
 tests/test_markets.py       Yahoo/FRED parsing, equity + macro analyzers, blending.
 pyproject.toml              Packaging, deps, pytest/ruff config.
@@ -136,8 +140,11 @@ in the cache, with live broker adapters for Breeze, Angel One, and Dhan.
 lookahead and reports hit rate, average captured move, and a calibration curve.
 `record-stats` scores the live signal log against outcomes. `scan-all` and
 `batch` run multi-asset scans across all configured markets. The read-only
-dashboard serves the latest recorded signals and outcome stats. 214 unit tests
-pass.
+dashboard serves the latest recorded signals and outcome stats. `report <ASSET>`
+prints a deterministic quant metrics report — regime (2-state HMM blended with
+drift), trend/momentum/volume scores, GARCH(1,1) volatility forecast, Kalman
+fair value, classic indicators, and ~50 features (`--json` for all of them).
+323 unit tests pass.
 
 Confidence calibration has been improved: the synthesis layer now factors in
 source reliability and agreement quality, so high confidence requires both

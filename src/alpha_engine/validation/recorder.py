@@ -69,14 +69,34 @@ def read_records(root: str | Path = DEFAULT_ROOT) -> list[SignalRecord]:
     """Load every recorded signal, oldest first. Reading never modifies the log.
 
     Reads line-by-line to avoid loading the entire file into memory at once.
+    A line that fails to parse (truncated write, disk-full artifact, hand edit)
+    is skipped with a loud warning instead of making the whole log — the
+    project's compounding asset — unreadable. The bad line stays in the file
+    untouched for forensics; append-only means we never rewrite it.
     """
+    import sys
+
     path = Path(root) / LOG_NAME
     if not path.exists():
         return []
     records: list[SignalRecord] = []
+    skipped = 0
     with path.open(encoding="utf-8") as f:
-        for line in f:
+        for lineno, line in enumerate(f, start=1):
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:
                 records.append(SignalRecord.model_validate_json(line))
+            except Exception:  # noqa: BLE001 - one bad line must not kill the log
+                skipped += 1
+                print(
+                    f"[recorder] WARNING: skipping corrupt line {lineno} in {path}",
+                    file=sys.stderr,
+                )
+    if skipped:
+        print(
+            f"[recorder] {skipped} corrupt line(s) skipped; {len(records)} records loaded",
+            file=sys.stderr,
+        )
     return records

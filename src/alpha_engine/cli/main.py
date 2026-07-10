@@ -48,6 +48,7 @@ from alpha_engine.ingestion import binance, coingecko, coingecko_pro, fred, oand
 from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
 from alpha_engine.ingestion.indian_fno import load_indian_chain
 from alpha_engine.narrative.narrator import write_thesis
+from alpha_engine.quant.report import build_report, render_text
 from alpha_engine.schema.signal import Market, Signal, SignalSource, Timeframe
 from alpha_engine.synthesis.synthesize import synthesize
 from alpha_engine.validation.backtest import run_backtest, run_per_analyzer_backtest
@@ -410,6 +411,42 @@ def cmd_backtest(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_report(args: argparse.Namespace) -> int:
+    """Full quant metrics report: regime, scores, volatility forecast,
+    fair-value distances, indicator values and a templated verdict. Same
+    fetch path as scan/backtest; all numbers deterministic."""
+    cache = Cache()
+    asset = args.asset.upper()
+    market = detect_market(asset, args.market)
+
+    if market is Market.IN_FNO:
+        print(
+            "[error] the quant report needs a price series; F&O indexes have "
+            "options chains, not candles. Try the underlying via Yahoo "
+            "(e.g. ^NSEI with --market us_equity) or use scan-chain.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        series = _load_series(asset, market, args.days, args.no_refresh, cache)
+    except Exception as e:  # noqa: BLE001 - surface any fetch issue clearly
+        print(f"[error] fetch failed: {e}", file=sys.stderr)
+        return 1
+
+    try:
+        report = build_report(series, market=market.value)
+    except ValueError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(report.model_dump_json(indent=2))
+    else:
+        print(render_text(report))
+    return 0
+
+
 def _format_table(rows: list[dict[str, str]]) -> str:
     headers = ["asset", "market", "direction", "confidence", "status", "note"]
     widths = {h: len(h) for h in headers}
@@ -706,6 +743,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="backtest each analyzer in isolation plus the blend, for comparison",
     )
     bt.set_defaults(func=cmd_backtest)
+
+    report = sub.add_parser(
+        "report", help="full quant metrics report (regime, scores, vol forecast, indicators)"
+    )
+    _add_market_args(report, default_days=365)
+    report.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    report.set_defaults(func=cmd_report)
 
     stats = sub.add_parser("record-stats", help="score recorded live signals against outcomes")
     stats.set_defaults(func=cmd_record_stats)

@@ -56,6 +56,10 @@ python -m web.server
 # Replay history through the analyzer (no lookahead) and see the honest hit rate.
 python -m alpha_engine.cli.main backtest BTC --days 365
 
+# Full quant metrics report: regime (HMM), trend/momentum/volume scores,
+# GARCH volatility forecast, Kalman fair value, ~50 features (add --json for all).
+python -m alpha_engine.cli.main report BTC
+
 # Score every signal you've recorded against what the market actually did.
 python -m alpha_engine.cli.main record-stats
 ```

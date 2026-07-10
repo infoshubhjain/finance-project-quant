@@ -57,7 +57,11 @@ def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> Price
         timeout=20,
     )
     resp.raise_for_status()
-    prices = resp.json().get("prices", [])
+    payload = resp.json()
+    prices = payload.get("prices", [])
+    # Same response carries daily volumes, aligned by timestamp. Map them so
+    # volume-based features work on the keyless default path.
+    volume_by_ts = {int(ts_ms): vol for ts_ms, vol in payload.get("total_volumes", [])}
 
     candles = [
         Candle(
@@ -66,6 +70,7 @@ def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> Price
             high=price,
             low=price,
             close=price,
+            volume=volume_by_ts.get(int(ts_ms)),
         )
         for ts_ms, price in prices
     ]

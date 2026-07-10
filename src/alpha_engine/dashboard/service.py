@@ -50,9 +50,15 @@ def build_dashboard_payload(
         records = read_records(records_root)
         latest = latest_records(records)
 
+        # One disk read per asset, not per record: with thousands of records
+        # per asset, re-reading the same price JSON dominated request time.
+        series_cache: dict[str, PriceSeries | None] = {}
         scored: list[tuple[float, object]] = []
         for record in records:
-            series, _stale = cache.get_price(record.signal.asset, "1d")
+            asset = record.signal.asset
+            if asset not in series_cache:
+                series_cache[asset] = cache.get_price(asset, "1d")[0]
+            series = series_cache[asset]
             if series is None:
                 continue
             scored.append((record.signal.confidence, score_record(record, series)))
@@ -65,9 +71,11 @@ def build_dashboard_payload(
         # correlations for the assets whose prices are cached.
         series_by_asset: dict[str, PriceSeries] = {}
         for record in latest:
-            series, _stale = cache.get_price(record.signal.asset, "1d")
-            if series is not None:
-                series_by_asset[record.signal.asset] = series
+            asset = record.signal.asset
+            if asset not in series_cache:
+                series_cache[asset] = cache.get_price(asset, "1d")[0]
+            if series_cache[asset] is not None:
+                series_by_asset[asset] = series_cache[asset]
         portfolio = build_portfolio_view([r.signal for r in latest], series_by_asset)
 
         return {

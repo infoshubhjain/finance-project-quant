@@ -68,6 +68,21 @@ def test_recorder_appends_and_reads_back(tmp_path):
     assert records[1].signal.direction is Direction.BEARISH
 
 
+def test_one_corrupt_line_does_not_kill_the_log(tmp_path, capsys):
+    """A truncated append (disk full, Ctrl-C) must cost one record, not the
+    whole track record. The bad line is skipped with a warning, valid records
+    on either side of it still load, and the file itself is left untouched."""
+    first = record_signal(_signal(), entry_price=100.0, root=tmp_path)
+    log = tmp_path / "signals.jsonl"
+    log.open("a").write('{"truncated...\n')
+    second = record_signal(_signal(Direction.BEARISH), entry_price=101.0, root=tmp_path)
+
+    records = read_records(root=tmp_path)
+    assert [r.record_id for r in records] == [first.record_id, second.record_id]
+    assert "corrupt line 2" in capsys.readouterr().err
+    assert '{"truncated...' in log.read_text()  # forensics: never rewritten
+
+
 def test_recorder_never_rewrites_existing_lines(tmp_path):
     record_signal(_signal(), entry_price=100.0, root=tmp_path)
     log = tmp_path / "signals.jsonl"
