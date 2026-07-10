@@ -36,4 +36,6 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Run tests
-        run: pytest -q --tb=short
+        # Coverage is reported for visibility, not gated: a hard threshold on
+        # a young codebase invites test-padding instead of honest tests.
+        run: pytest -q --tb=short --cov=alpha_engine --cov-report=term

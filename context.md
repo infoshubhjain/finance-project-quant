@@ -144,7 +144,7 @@ dashboard serves the latest recorded signals and outcome stats. `report <ASSET>`
 prints a deterministic quant metrics report — regime (2-state HMM blended with
 drift), trend/momentum/volume scores, GARCH(1,1) volatility forecast, Kalman
 fair value, classic indicators, and ~50 features (`--json` for all of them).
-323 unit tests pass.
+332 unit tests pass.
 
 Confidence calibration has been improved: the synthesis layer now factors in
 source reliability and agreement quality, so high confidence requires both

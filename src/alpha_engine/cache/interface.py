@@ -14,6 +14,8 @@ can decide whether to trigger a refresh. The cache never silently serves rot.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol
@@ -51,6 +53,22 @@ class Store(Protocol):
     def read_chain(self, underlying: str) -> OptionsChain | None: ...
 
 
+def _tmp_path(p: Path) -> Path:
+    """Writer-private temp name. The PID suffix keeps two processes writing the
+    same asset (cron batch + a manual scan) from interleaving into one temp
+    file; each rename is atomic, last writer wins cleanly."""
+    return p.with_name(f"{p.name}.{os.getpid()}.tmp")
+
+
+def _warn_corrupt(p: Path, e: Exception) -> None:
+    """A cache file that fails to parse is treated as absent (the caller will
+    refetch), never as a crash: the cache is a convenience copy of remote
+    data, so the honest recovery is a refetch, loudly."""
+    print(
+        f"[cache] WARNING: corrupt cache file {p} ({type(e).__name__}); refetching", file=sys.stderr
+    )
+
+
 class LocalStore:
     """Zero-dependency file-backed store. JSON for simplicity at this stage;
     swap the serialization for Parquet once series get large. Lives under data/
@@ -73,7 +91,7 @@ class LocalStore:
 
     def write_price(self, series: PriceSeries) -> None:
         p = self._price_path(series.asset, series.interval.value)
-        tmp = p.with_suffix(".tmp")
+        tmp = _tmp_path(p)
         tmp.write_text(series.model_dump_json(indent=2))
         tmp.rename(p)
 
@@ -81,7 +99,11 @@ class LocalStore:
         p = self._price_path(asset, interval)
         if not p.exists():
             return None
-        return PriceSeries.model_validate_json(p.read_text())
+        try:
+            return PriceSeries.model_validate_json(p.read_text())
+        except Exception as e:  # noqa: BLE001 - corrupt cache = missing cache
+            _warn_corrupt(p, e)
+            return None
 
     def write_macro(self, obs: list[MacroObservation]) -> None:
         """Write macro observations, merging with any existing cached data.
@@ -110,7 +132,7 @@ class LocalStore:
             for item in new_items:
                 merged_by_ts[item.ts] = item
             merged = sorted(merged_by_ts.values(), key=lambda o: o.ts)
-            tmp = p.with_suffix(".tmp")
+            tmp = _tmp_path(p)
             tmp.write_text(json.dumps([i.model_dump(mode="json") for i in merged], indent=2))
             tmp.rename(p)
 
@@ -118,12 +140,16 @@ class LocalStore:
         p = self._macro_path(series_id)
         if not p.exists():
             return []
-        raw = json.loads(p.read_text())
-        return [MacroObservation.model_validate(r) for r in raw]
+        try:
+            raw = json.loads(p.read_text())
+            return [MacroObservation.model_validate(r) for r in raw]
+        except Exception as e:  # noqa: BLE001 - corrupt cache = missing cache
+            _warn_corrupt(p, e)
+            return []
 
     def write_chain(self, chain: OptionsChain) -> None:
         p = self._chain_path(chain.underlying)
-        tmp = p.with_suffix(".tmp")
+        tmp = _tmp_path(p)
         tmp.write_text(chain.model_dump_json(indent=2))
         tmp.rename(p)
 
@@ -131,7 +157,11 @@ class LocalStore:
         p = self._chain_path(underlying)
         if not p.exists():
             return None
-        return OptionsChain.model_validate_json(p.read_text())
+        try:
+            return OptionsChain.model_validate_json(p.read_text())
+        except Exception as e:  # noqa: BLE001 - corrupt cache = missing cache
+            _warn_corrupt(p, e)
+            return None
 
 
 class Cache:

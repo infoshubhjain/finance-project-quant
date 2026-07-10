@@ -46,6 +46,17 @@ _CONTENT_TYPES = {
 class DashboardHandler(BaseHTTPRequestHandler):
     server_version = "AlphaDashboard/1.0"
 
+    def _send_security_headers(self) -> None:
+        """Baseline hardening: no MIME sniffing, no framing, and scripts/styles
+        only from this origin (the frontend is fully self-hosted, so a strict
+        CSP costs nothing)."""
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:",
+        )
+
     def do_GET(self) -> None:  # noqa: N802
         path = unquote(urlsplit(self.path).path)
 
@@ -84,6 +95,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)
 
@@ -92,6 +104,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)
 
