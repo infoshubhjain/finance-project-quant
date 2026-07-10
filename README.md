@@ -15,9 +15,9 @@ It runs a clean pipeline, one stage at a time:
 ```text
   ingest          cache            analyze            synthesize        narrate
  (sources)  ->  (local store)  ->  (deterministic) ->  (weighted vote) -> (prose)
-                                                                              |
-                                                                              v
-                                                                          Signal
+                                                                               |
+                                                                               v
+                                                                           Signal
 ```
 
 Every numeric, decision-bearing field is computed by **deterministic, tested
@@ -41,7 +41,7 @@ python -m alpha_engine.cli.main scan AAPL
 
 # Analyze a normalized Indian F&O chain fixture or a raw broker-export JSON,
 # without any broker credentials.
-python -m alpha_engine.cli.main scan-chain data/cache/chain/NIFTY.json
+python -m alpha_engine.cli.main scan-chain tests/fixtures/nifty_chain.json --underlying NIFTY
 python -m alpha_engine.cli.main scan-chain raw_chain.json --underlying NIFTY
 
 # Fetch a live Breeze chain from a test account and analyze it.
@@ -57,8 +57,11 @@ python -m web.server
 python -m alpha_engine.cli.main backtest BTC --days 365
 
 # Full quant metrics report: regime (HMM), trend/momentum/volume scores,
-# GARCH volatility forecast, Kalman fair value, ~50 features (add --json for all).
+# GARCH volatility forecast, Kalman fair value, classic indicators, ~50 features (add --json for all).
 python -m alpha_engine.cli.main report BTC
+
+# Scan all configured assets across markets (crypto + US equities).
+python -m alpha_engine.cli.main scan-all
 
 # Score every signal you've recorded against what the market actually did.
 python -m alpha_engine.cli.main record-stats
@@ -94,7 +97,8 @@ add free keys or broker accounts. Nothing here requires payment.
 `scan NIFTY` runs them on any normalized chain in the cache, `scan-chain`
 can normalize a raw broker-export JSON first, and `fetch-chain` can pull a live
 chain from a Breeze test account before analyzing it. `watch` gives you a
-compact batch view across multiple assets, and `python -m web.server` exposes a
+compact batch view across multiple assets, `scan-all` runs multi-asset scans
+across all configured markets, and `python -m web.server` exposes a
 read-only dashboard over the same recorded signal log.
 
 The LLM narrator is also optional. With no model key, a deterministic template
@@ -107,28 +111,33 @@ src/alpha_engine/
   schema/        the Signal contract. The spine. Read this first.
   cache/         the read interface analyzers call instead of the network
   ingestion/     source adapters that normalize data into the cache
+  quant/         ~50 deterministic features, Kalman, GARCH(1,1), 2-state HMM
   analyzers/     deterministic, pure-function specialists (one per concern)
   synthesis/     folds analyzer outputs into one Signal
   narrative/     writes the thesis string (templated, optional LLM)
   validation/    immutable signal recording, outcome scoring, backtesting
-  cli/           the commands you actually run: scan, backtest, record-stats
+  orchestrator/  multi-agent orchestration for batch/multi-asset scans
+  dashboard/     read-only FastAPI service for the web UI
+  cli/           the commands you actually run: scan, scan-all, backtest, report, record-stats, watch, scan-chain, fetch-chain
 tests/           proof the deterministic core is deterministic
+web/             vanilla JS + inline SVG dashboard (no build step)
 ```
 
 ## Status and honesty notes
 
-This is an early scaffold. It proves the architecture end to end with one market and
-one simple analyzer. A few things are deliberately honest about their limits:
+This is an early scaffold. It proves the architecture end to end with multiple
+markets and analyzers. A few things are deliberately honest about their limits:
 
-- **The trend analyzer is a scaffold, not alpha.** It's a transparent
-  moving-average heuristic meant to exercise the pipeline. It is not a profitable
-  strategy and is not claimed to be — and the backtester now proves it, showing a
-  roughly coin-flip hit rate. That measured baseline is what improvement gets
-  judged against.
-- **Confidence is not yet calibrated.** The current heuristic can pin confidence at
-  extreme values, and the backtest's calibration curve makes the miscalibration
-  visible (high-confidence buckets do not hit more often). Fixing the number against
-  recorded outcomes is the next analyzer-side job.
+- **The trend analyzers are scaffolds, not alpha.** They're transparent
+  moving-average / momentum heuristics meant to exercise the pipeline. They are
+  not profitable strategies and are not claimed to be — and the backtester now
+  proves it, showing a roughly coin-flip hit rate on BTC. That measured baseline
+  is what improvement gets judged against.
+- **Confidence calibration has been improved** but remains heuristic. The synthesis
+  layer now factors in source reliability and agreement quality, so high
+  confidence requires both strong agreement AND historically reliable source types.
+  The source-count cap ensures few sources produce honestly uncertain confidence
+  levels. Fixing confidence against recorded outcomes is ongoing work.
 - **Free data sources rate-limit.** The cache layer exists precisely so you read
   local data instead of hammering APIs. If you see a `429`, wait and retry.
 
