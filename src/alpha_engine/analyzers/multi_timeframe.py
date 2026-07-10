@@ -17,6 +17,7 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 
 from __future__ import annotations
 
+from alpha_engine.analyzers.crypto_trend import _sma
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.schema.signal import Direction, SignalSource
 
@@ -28,12 +29,6 @@ _HORIZONS: tuple[tuple[str, int], ...] = (("short", 10), ("medium", 20), ("long"
 # A horizon must move at least this much (fraction of price) to count as a
 # trend; smaller drift is flat noise, not agreement.
 _FLAT_BAND = 0.005
-
-
-def _sma(values: list[float], window: int) -> float | None:
-    if len(values) < window:
-        return None
-    return sum(values[-window:]) / window
 
 
 def _horizon_direction(closes: list[float], window: int) -> Direction | None:

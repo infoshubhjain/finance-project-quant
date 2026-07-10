@@ -17,18 +17,10 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 
 from __future__ import annotations
 
-import math
+from statistics import fmean, pstdev
 
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.schema.signal import Direction, SignalSource
-
-
-def _stddev(values: list[float], mean: float) -> float:
-    """Population standard deviation."""
-    if len(values) < 2:
-        return 0.0
-    variance = sum((v - mean) ** 2 for v in values) / len(values)
-    return math.sqrt(variance)
 
 
 def _bollinger_bands(
@@ -38,8 +30,8 @@ def _bollinger_bands(
     if len(closes) < period:
         return None
     window = closes[-period:]
-    middle = sum(window) / period
-    std = _stddev(window, middle)
+    middle = fmean(window)
+    std = pstdev(window)
     lower = middle - num_std * std
     upper = middle + num_std * std
     return lower, middle, upper

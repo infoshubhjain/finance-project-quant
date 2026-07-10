@@ -17,21 +17,10 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 from __future__ import annotations
 
 from alpha_engine.cache.models import PriceSeries
+from alpha_engine.quant.features import ema_series as _ema
 from alpha_engine.schema.signal import Direction, SignalSource
 
 _NAME = "macd"
-
-
-def _ema(values: list[float], period: int) -> list[float]:
-    """Standard EMA seeded with the SMA of the first `period` values."""
-    if len(values) < period:
-        return []
-    k = 2.0 / (period + 1.0)
-    seed = sum(values[:period]) / period
-    out = [seed]
-    for v in values[period:]:
-        out.append(v * k + out[-1] * (1.0 - k))
-    return out
 
 
 def _macd_lines(

@@ -95,15 +95,3 @@ class MacroObservation(BaseModel):
     ts: datetime
     value: float
     source: str  # e.g. 'fred'
-
-
-class CacheKey(BaseModel):
-    """How a cached item is addressed. Kept explicit so the store stays debuggable
-    and a human can reason about what's cached."""
-
-    kind: str  # 'price' | 'macro'
-    asset: str  # asset symbol or series id
-    interval: str = ""  # only for price
-
-    def as_str(self) -> str:
-        return f"{self.kind}:{self.asset}:{self.interval}".rstrip(":")

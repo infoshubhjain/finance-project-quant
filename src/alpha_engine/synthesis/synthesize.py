@@ -113,10 +113,7 @@ def _source_count_cap(n_sources: int) -> float:
     sources. More sources raise the ceiling, but it never reaches 1.0."""
     if n_sources <= 0:
         return 0.0
-    for threshold in sorted(_SOURCE_COUNT_CAP.keys()):
-        if n_sources <= threshold:
-            return _SOURCE_COUNT_CAP[threshold]
-    return _SOURCE_COUNT_CAP[max(_SOURCE_COUNT_CAP.keys())]
+    return _SOURCE_COUNT_CAP[min(n_sources, max(_SOURCE_COUNT_CAP))]
 
 
 def _calibrate_confidence(

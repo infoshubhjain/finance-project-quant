@@ -11,14 +11,17 @@ later and only after the validation harness measures it.
 
 from __future__ import annotations
 
+from statistics import fmean
+
 from alpha_engine.cache.models import Candle, PriceSeries
 from alpha_engine.schema.signal import Direction, SignalSource
 
 
 def _sma(values: list[float], window: int) -> float | None:
+    """Shared by every analyzer that needs a simple moving average."""
     if len(values) < window:
         return None
-    return sum(values[-window:]) / window
+    return fmean(values[-window:])
 
 
 def _momentum(values: list[float], lookback: int) -> float | None:

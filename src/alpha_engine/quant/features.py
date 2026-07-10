@@ -122,8 +122,8 @@ def _true_ranges(candles: list[Candle]) -> list[float]:
 
 
 def ema_series(values: list[float], period: int) -> list[float]:
-    """Standard EMA seeded with the SMA of the first `period` values, matching
-    the convention already used in analyzers/macd.py."""
+    """Standard EMA seeded with the SMA of the first `period` values. The
+    single EMA implementation in the codebase; analyzers import it too."""
     if len(values) < period:
         return []
     k = 2.0 / (period + 1.0)

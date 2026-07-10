@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY pyproject.toml README.md ./
 COPY src/ src/
 
-# Install the package in editable mode
-RUN pip install --no-cache-dir -e ".[dev]" 2>/dev/null || \
-    pip install --no-cache-dir .
+# Runtime deps only: dev tools (pytest, ruff) have no business in the image,
+# and a non-editable install is what the runtime stage's site-packages expects
+RUN pip install --no-cache-dir .
 
 # --- Stage 2: Runtime ---
 FROM python:3.12-slim AS runtime

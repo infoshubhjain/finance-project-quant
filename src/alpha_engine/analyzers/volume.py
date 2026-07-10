@@ -17,6 +17,7 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 
 from __future__ import annotations
 
+from alpha_engine.analyzers.crypto_trend import _sma
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.schema.signal import Direction, SignalSource
 
@@ -35,12 +36,6 @@ def _obv(closes: list[float], volumes: list[float]) -> list[float]:
         else:
             obv_series.append(obv_series[-1])
     return obv_series
-
-
-def _sma(values: list[float], window: int) -> float | None:
-    if len(values) < window:
-        return None
-    return sum(values[-window:]) / window
 
 
 def analyze_volume(

@@ -35,11 +35,20 @@ def supports(asset: str) -> bool:
     return asset.upper() in _COINGECKO_IDS
 
 
-def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> PriceSeries:
+def fetch_daily(
+    asset: str,
+    days: int = 90,
+    cache: Cache | None = None,
+    *,
+    base: str = _BASE,
+    headers: dict[str, str] | None = None,
+) -> PriceSeries:
     """Fetch daily OHLC for a crypto asset, normalize, cache, and return it.
 
     Raises a clear error if the asset isn't mapped, so a user adding a new coin
-    knows exactly what to do.
+    knows exactly what to do. `base`/`headers` exist so the Pro adapter can
+    reuse this exact fetch against the authenticated host — same response
+    shape, same normalization, one implementation.
     """
     cache = cache or Cache()
     asset = asset.upper()
@@ -52,8 +61,9 @@ def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> Price
     # use market_chart and treat each daily close as the bar. (OHLC detail can be
     # layered back in later from a keyed source without changing anything downstream.)
     resp = requests.get(
-        f"{_BASE}/coins/{coin_id}/market_chart",
+        f"{base}/coins/{coin_id}/market_chart",
         params={"vs_currency": "usd", "days": str(days), "interval": "daily"},
+        headers=headers,
         timeout=20,
     )
     resp.raise_for_status()

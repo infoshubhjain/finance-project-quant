@@ -22,6 +22,7 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 from __future__ import annotations
 
 from alpha_engine.cache.models import PriceSeries
+from alpha_engine.quant.features import _true_ranges
 from alpha_engine.schema.signal import Direction, SignalSource
 
 _NAME = "volatility_regime"
@@ -37,19 +38,10 @@ EXTREME_RATIO = 2.5
 _SCALARS = {"low": 1.0, "normal": 1.0, "high": 1.0, "extreme": 0.6}
 
 
-def _true_ranges(series: PriceSeries) -> list[float]:
-    candles = series.candles
-    trs: list[float] = []
-    for i in range(1, len(candles)):
-        c, prev = candles[i], candles[i - 1]
-        trs.append(max(c.high - c.low, abs(c.high - prev.close), abs(c.low - prev.close)))
-    return trs
-
-
 def _atr_ratio(series: PriceSeries, period: int, baseline: int) -> float | None:
     """Current ATR(period) divided by the average true range over `baseline`
     bars. None when there isn't enough history for both."""
-    trs = _true_ranges(series)
+    trs = _true_ranges(series.candles)
     if len(trs) < baseline or baseline <= period:
         return None
     atr_now = sum(trs[-period:]) / period

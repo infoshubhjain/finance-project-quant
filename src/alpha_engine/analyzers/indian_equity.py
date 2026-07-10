@@ -14,14 +14,9 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 
 from __future__ import annotations
 
+from alpha_engine.analyzers.crypto_trend import _sma
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.schema.signal import Direction, SignalSource
-
-
-def _sma(values: list[float], window: int) -> float | None:
-    if len(values) < window:
-        return None
-    return sum(values[-window:]) / window
 
 
 def _gap_analysis(candles: list) -> float | None:

@@ -13,7 +13,7 @@ import pytest
 
 from alpha_engine.cache.interface import Cache, LocalStore
 from alpha_engine.cache.models import Interval
-from alpha_engine.ingestion import binance, coingecko_pro, oanda
+from alpha_engine.ingestion import binance, coingecko, coingecko_pro, oanda
 
 
 class _FakeResponse:
@@ -97,7 +97,10 @@ def test_coingecko_pro_sends_key_header(tmp_path, monkeypatch):
         captured["headers"] = kwargs.get("headers", {})
         return _FakeResponse({"prices": [[1704067200000, 42800.0], [1704153600000, 44000.0]]})
 
-    monkeypatch.setattr(coingecko_pro.requests, "get", fake_get)
+    # The pro module delegates to the shared keyless adapter, so the HTTP
+    # call (and this patch) lives in coingecko — the assertions below still
+    # prove the pro host and key header are what actually go on the wire.
+    monkeypatch.setattr(coingecko.requests, "get", fake_get)
     series = coingecko_pro.fetch_daily("BTC", days=30, cache=_tmp_cache(tmp_path))
 
     assert "pro-api.coingecko.com" in captured["url"]
