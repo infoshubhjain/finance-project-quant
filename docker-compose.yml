@@ -48,3 +48,5 @@ services:
       - FRED_API_KEY=${FRED_API_KEY:-}
     profiles:
       - batch
+  
+
