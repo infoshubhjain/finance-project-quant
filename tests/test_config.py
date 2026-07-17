@@ -28,7 +28,7 @@ def test_load_project_env_reads_repo_env_files(tmp_path, monkeypatch):
     monkeypatch.delenv("ANGEL_ONE_CLIENT_ID", raising=False)
 
     module = reload(config)
-    module._ENV_LOADED = False  # noqa: SLF001 - test reset
+    module._ENV_LOADED = False  # type: ignore[attr-defined]  # noqa: SLF001 - test reset
     module.load_project_env()
 
     assert os.environ["FRED_API_KEY"] == "from-file"
@@ -45,7 +45,7 @@ def test_load_project_env_does_not_override_existing_values(tmp_path, monkeypatc
     monkeypatch.setenv("FRED_API_KEY", "already-set")
 
     module = reload(config)
-    module._ENV_LOADED = False  # noqa: SLF001 - test reset
+    module._ENV_LOADED = False  # type: ignore[attr-defined]  # noqa: SLF001 - test reset
     module.load_project_env()
 
     assert os.environ["FRED_API_KEY"] == "already-set"

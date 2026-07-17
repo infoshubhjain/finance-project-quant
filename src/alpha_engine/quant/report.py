@@ -322,7 +322,7 @@ def _verdict(rep_vals: dict[str, object]) -> str:
         if isinstance(overall, int) and overall <= 40
         else "neutral"
     )
-    parts = [f"Structure reads {label.lower()}; the overall evidence blend is {lean}."]
+    parts = [f"Structure reads {str(label).lower()}; the overall evidence blend is {lean}."]
     vp = rep_vals["vol_percentile"]
     if isinstance(vp, float):
         if vp >= 0.8:

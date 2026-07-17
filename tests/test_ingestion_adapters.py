@@ -57,7 +57,7 @@ def test_binance_normalizes_klines(tmp_path, monkeypatch):
         captured["params"] = kwargs.get("params", {})
         return _FakeResponse(_BINANCE_ROWS)
 
-    monkeypatch.setattr(binance.requests, "get", fake_get)
+    monkeypatch.setattr(binance.net, "get", fake_get)
     cache = _tmp_cache(tmp_path)
     series = binance.fetch_daily("BTC", days=90, cache=cache)
 
@@ -100,7 +100,7 @@ def test_coingecko_pro_sends_key_header(tmp_path, monkeypatch):
     # The pro module delegates to the shared keyless adapter, so the HTTP
     # call (and this patch) lives in coingecko — the assertions below still
     # prove the pro host and key header are what actually go on the wire.
-    monkeypatch.setattr(coingecko.requests, "get", fake_get)
+    monkeypatch.setattr(coingecko.net, "get", fake_get)
     series = coingecko_pro.fetch_daily("BTC", days=30, cache=_tmp_cache(tmp_path))
 
     assert "pro-api.coingecko.com" in captured["url"]
@@ -160,7 +160,7 @@ def test_oanda_normalizes_candles(tmp_path, monkeypatch):
         captured["headers"] = kwargs.get("headers", {})
         return _FakeResponse(payload)
 
-    monkeypatch.setattr(oanda.requests, "get", fake_get)
+    monkeypatch.setattr(oanda.net, "get", fake_get)
     series = oanda.fetch_daily("EUR/USD", days=90, cache=_tmp_cache(tmp_path))
 
     assert "api-fxpractice.oanda.com" in captured["url"]  # practice is the default env

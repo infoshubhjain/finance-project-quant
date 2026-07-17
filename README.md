@@ -428,7 +428,7 @@ python -m alpha_engine.cli.main scan BTC
 
 ### CI
 
-GitHub Actions runs tests on Python 3.10, 3.11, and 3.12, plus lint checks.
+GitHub Actions runs tests on Python 3.11, 3.12, and 3.13, plus lint checks.
 
 ---
 
@@ -445,8 +445,8 @@ analyzers, add news/sentiment ingestion, crypto on-chain data, fundamentals,
 macro breadth, an MCP server for AI assistant integration, and the full
 validation feedback loop (offline, human-invoked calibration).
 
-See [FUTURE_WORK.md](FUTURE_WORK.md) for the full phased roadmap, and
-[plan.md](plan.md) for the original build plan that Phases 0–6 fulfilled.
+See [FUTURE_WORK.md](FUTURE_WORK.md) for the full phased roadmap. (The original
+build plan it grew from — Phases 0–6 — is fulfilled and has been retired.)
 
 ---
 

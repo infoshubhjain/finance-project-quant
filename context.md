@@ -120,7 +120,6 @@ tests/test_markets.py       Yahoo/FRED parsing, equity + macro analyzers, blendi
 pyproject.toml              Packaging, deps, pytest/ruff config.
 README.md                   User-facing overview + capability matrix.
 CONTRIBUTING.md             Contributor rules (mirrors the cardinal rule).
-PLAN.md                     The full build roadmap.
 .env.example                Optional keys (all free tiers). Default path needs none.
 ```
 
@@ -154,7 +153,7 @@ ensures few sources produce honestly uncertain confidence levels.
 The LLM narrator is optional and gated behind a user-supplied key. It rewrites
 thesis prose but is re-validated to never change a number on the Signal.
 
-Note one deviation from PLAN.md: equity candles come from Yahoo's keyless chart
+Note one deviation from the original build plan: equity candles come from Yahoo's keyless chart
 endpoint, not Finnhub — Finnhub's free tier no longer serves stock candles, and
 keyless beats key-gated per the rules below.
 
@@ -218,7 +217,7 @@ When asked to extend this project:
    API or a required key into the crypto default flow.
 7. **Match existing style:** type hints, `from __future__ import annotations`,
    docstrings that explain *why* not just *what*, Pydantic for all data shapes.
-8. When in doubt about scope or ordering, consult `PLAN.md` and prefer the smallest
+8. When in doubt about scope or ordering, consult `FUTURE_WORK.md` and prefer the smallest
    change that is testable on its own.
 
 ---

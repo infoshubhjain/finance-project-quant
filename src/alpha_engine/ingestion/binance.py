@@ -19,8 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import Candle, Interval, PriceSeries
 
@@ -51,7 +50,7 @@ def fetch_daily(asset: str, days: int = 90, cache: Cache | None = None) -> Price
     if symbol is None:
         raise ValueError(f"{asset} not mapped to a Binance pair. Add it to _BINANCE_SYMBOLS.")
 
-    resp = requests.get(
+    resp = net.get(
         f"{_BASE}/klines",
         params={"symbol": symbol, "interval": "1d", "limit": str(min(days, 1000))},
         timeout=20,

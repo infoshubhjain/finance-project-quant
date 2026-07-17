@@ -13,12 +13,11 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-
 from alpha_engine.orchestrator import (
     BatchReport,
     ScanResult,
-    load_config,
     _parse_asset_string,
+    load_config,
 )
 from alpha_engine.schema.signal import Direction, Market, Signal, Timeframe
 
@@ -126,10 +125,11 @@ def test_batch_report_counts():
     ]
     report.finished_at = datetime.now(timezone.utc)
 
-    assert report.total == 4
-    assert report.ok == 2
-    assert report.errors == 1
-    assert report.skipped == 1
+    summary = report.summary()
+    assert summary["total"] == 4
+    assert summary["ok"] == 2
+    assert summary["errors"] == 1
+    assert summary["skipped"] == 1
 
 
 def test_batch_report_summary_shape():
@@ -145,7 +145,8 @@ def test_batch_report_summary_shape():
                 direction=Direction.BULLISH,
                 confidence=0.8,
                 timeframe=Timeframe.SWING,
-                signal_sources=[],
+                invalidation_level=None,
+                thesis="test",
             ),
             duration_ms=123.4,
         ),
@@ -163,11 +164,10 @@ def test_batch_report_summary_shape():
 
 def test_batch_report_empty():
     report = BatchReport()
-    assert report.total == 0
-    assert report.ok == 0
-    assert report.errors == 0
     summary = report.summary()
     assert summary["total"] == 0
+    assert summary["ok"] == 0
+    assert summary["errors"] == 0
     assert summary["results"] == []
 
 
@@ -181,6 +181,8 @@ def test_scan_result_ok():
         direction=Direction.BULLISH,
         confidence=0.7,
         timeframe=Timeframe.SWING,
+        invalidation_level=None,
+        thesis="test",
     )
     result = ScanResult(asset="BTC", market="crypto", status="ok", signal=sig, duration_ms=50.0)
     assert result.status == "ok"

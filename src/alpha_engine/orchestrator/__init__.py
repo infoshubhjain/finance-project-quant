@@ -27,7 +27,6 @@ from typing import Any
 from alpha_engine.cache.interface import Cache
 from alpha_engine.schema.signal import Market, Signal
 
-
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
@@ -45,7 +44,7 @@ DEFAULT_PORTFOLIO: list[dict[str, Any]] = [
 ]
 
 # Config file locations searched in order
-_CONFIG_FILENAMES = ("portfolio.json", "orchestrator.json")
+_CONFIG_FILENAMES = ("portfolio.json",)
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,30 +87,34 @@ class BatchReport:
     finished_at: datetime | None = None
     results: list[ScanResult] = field(default_factory=list)
 
-    @property
-    def total(self) -> int:
-        return len(self.results)
-
-    @property
-    def ok(self) -> int:
-        return sum(1 for r in self.results if r.status == "ok")
-
-    @property
-    def errors(self) -> int:
-        return sum(1 for r in self.results if r.status == "error")
-
-    @property
-    def skipped(self) -> int:
-        return sum(1 for r in self.results if r.status == "skipped")
-
     def summary(self) -> dict[str, Any]:
+        from collections import Counter
+
+        counts = Counter(r.status for r in self.results)
+
+        # Portfolio view: aggregate directional signals with correlation reads
+        ok_signals = [r.signal for r in self.results if r.signal is not None]
+        portfolio_data: dict[str, Any] | None = None
+        if ok_signals:
+            from alpha_engine.analyzers.portfolio_signal import build_portfolio_view
+
+            cache = Cache()
+            series_by_asset: dict[str, Any] = {}
+            for r in self.results:
+                if r.signal is not None and r.signal.direction is not None:
+                    series, _stale = cache.get_price(r.asset, "1d")
+                    if series is not None:
+                        series_by_asset[r.asset] = series
+            pv = build_portfolio_view(ok_signals, series_by_asset)
+            portfolio_data = pv.model_dump(mode="json")
+
         return {
             "started_at": self.started_at.isoformat(),
             "finished_at": self.finished_at.isoformat() if self.finished_at else None,
-            "total": self.total,
-            "ok": self.ok,
-            "errors": self.errors,
-            "skipped": self.skipped,
+            "total": len(self.results),
+            "ok": counts["ok"],
+            "errors": counts["error"],
+            "skipped": counts["skipped"],
             "results": [
                 {
                     "asset": r.asset,
@@ -124,6 +127,7 @@ class BatchReport:
                 }
                 for r in self.results
             ],
+            "portfolio": portfolio_data,
         }
 
 
@@ -212,16 +216,6 @@ def _load_targets_from_defaults() -> list[AssetTarget]:
     return targets
 
 
-def _find_config_file() -> Path | None:
-    """Search for a config file in the project root."""
-    project_root = Path(__file__).resolve().parents[2]
-    for name in _CONFIG_FILENAMES:
-        path = project_root / name
-        if path.exists():
-            return path
-    return None
-
-
 # ---------------------------------------------------------------------------
 # Batch scanning
 # ---------------------------------------------------------------------------
@@ -251,7 +245,7 @@ def scan_target(
     try:
         entry = None
         if market is Market.IN_FNO:
-            chain, stale = cache.get_chain(asset)
+            chain, _stale = cache.get_chain(asset)
             if chain is None:
                 return ScanResult(
                     asset=asset,

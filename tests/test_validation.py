@@ -52,7 +52,7 @@ def _signal(direction: Direction = Direction.BULLISH, **overrides) -> Signal:
         timestamp=T0,
     )
     defaults.update(overrides)
-    return Signal(**defaults)
+    return Signal(**defaults)  # type: ignore[call-arg]
 
 
 # --- recorder ---------------------------------------------------------------
@@ -236,7 +236,7 @@ def test_backtest_counts_every_simulated_bar():
 def test_summarize_outcomes_buckets_and_rates():
     resolved_hit = Outcome(status=OutcomeStatus.RESOLVED, hit=True, realized_return=0.1)
     resolved_miss = Outcome(status=OutcomeStatus.RESOLVED, hit=False, realized_return=-0.05)
-    pending = Outcome(status=OutcomeStatus.PENDING)
+    pending = Outcome(status=OutcomeStatus.PENDING, realized_return=None)
 
     summary = summarize_outcomes([(0.1, resolved_hit), (0.15, resolved_miss), (0.9, pending)])
     assert summary.total == 3

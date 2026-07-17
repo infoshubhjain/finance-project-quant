@@ -2,9 +2,9 @@
 HERE, never from the network. An ingestion service (Phase 1, separate process or
 scheduled job) keeps the store fresh; consumers just read.
 
-The default backend is a local Parquet/JSON store so a freshly cloned repo runs
-with zero infrastructure. Swapping in Postgres/Timescale later means implementing
-the same Store protocol, and nothing upstream changes.
+The default backend is a local JSON store so a freshly cloned repo runs
+with zero infrastructure. Swapping in Postgres/Timescale later means writing
+a second store class and adjusting the Cache() default; nothing upstream changes.
 
 Freshness: every kind has a TTL. A quote goes stale in seconds, a CPI print in a
 month. `get_price`/`get_macro` return data plus whether it's stale, so a consumer
@@ -18,7 +18,6 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Protocol
 
 from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
 
@@ -39,18 +38,6 @@ def _ttl_for(kind: str, interval: str = "") -> timedelta:
 def is_stale(fetched_at: datetime, kind: str, interval: str = "") -> bool:
     age = datetime.now(timezone.utc) - fetched_at
     return age > _ttl_for(kind, interval)
-
-
-class Store(Protocol):
-    """Backend contract. LocalStore implements this; a future PostgresStore would
-    too. Consumers depend on this protocol, not the concrete backend."""
-
-    def write_price(self, series: PriceSeries) -> None: ...
-    def read_price(self, asset: str, interval: str) -> PriceSeries | None: ...
-    def write_macro(self, obs: list[MacroObservation]) -> None: ...
-    def read_macro(self, series_id: str) -> list[MacroObservation]: ...
-    def write_chain(self, chain: OptionsChain) -> None: ...
-    def read_chain(self, underlying: str) -> OptionsChain | None: ...
 
 
 def _tmp_path(p: Path) -> Path:
@@ -168,8 +155,8 @@ class Cache:
     """The public read interface. Analyzers get one of these and ask it for data.
     They never know or care where it came from."""
 
-    def __init__(self, store: Store | None = None) -> None:
-        self.store: Store = store or LocalStore()
+    def __init__(self, store: LocalStore | None = None) -> None:
+        self.store: LocalStore = store or LocalStore()
 
     def get_price(self, asset: str, interval: str) -> tuple[PriceSeries | None, bool]:
         """Returns (series, stale). series is None if nothing cached yet.

@@ -12,8 +12,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import MacroObservation
 
@@ -65,7 +64,7 @@ def fetch_series(
             "and export it (see .env.example). Macro context is skipped without it."
         )
 
-    resp = requests.get(
+    resp = net.get(
         _BASE,
         params={
             "series_id": series_id,

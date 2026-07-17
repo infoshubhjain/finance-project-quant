@@ -23,8 +23,7 @@ import os
 import re
 from datetime import datetime, timezone
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import Candle, Interval, PriceSeries
 
@@ -112,7 +111,7 @@ def fetch_daily(
         raise ValueError(f"OANDA_ENV must be 'practice' or 'live', not {env!r}.")
 
     cache = cache or Cache()
-    resp = requests.get(
+    resp = net.get(
         f"{host}/v3/instruments/{instrument}/candles",
         params={"granularity": "D", "count": str(min(days, 500)), "price": "M"},
         headers={"Authorization": f"Bearer {key}"},

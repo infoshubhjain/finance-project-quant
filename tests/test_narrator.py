@@ -16,7 +16,6 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-
 from alpha_engine.narrative.llm import (
     _build_prompt,
     _extract_numeric_fields,
@@ -47,10 +46,11 @@ def _signal(
         confidence=confidence,
         timeframe=Timeframe.SWING,
         signal_sources=[
-            SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.8),
-            SignalSource(name="macro.ctx", direction=Direction.BULLISH, weight=0.3),
+            SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.8, detail=""),
+            SignalSource(name="macro.ctx", direction=Direction.BULLISH, weight=0.3, detail=""),
         ],
         invalidation_level=invalidation,
+        thesis="",
         timestamp=T0,
     )
 
@@ -146,8 +146,8 @@ def test_validate_unchanged_detects_direction_change():
 def test_validate_unchanged_detects_source_weight_change():
     sig = _signal()
     new_sources = [
-        SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.99),
-        SignalSource(name="macro.ctx", direction=Direction.BULLISH, weight=0.3),
+        SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.99, detail=""),
+        SignalSource(name="macro.ctx", direction=Direction.BULLISH, weight=0.3, detail=""),
     ]
     changed = sig.model_copy(update={"signal_sources": new_sources})
     assert _validate_numeric_fields_unchanged(sig, changed) is False
@@ -191,7 +191,7 @@ def test_rewrite_thesis_falls_back_on_http_failure(monkeypatch):
 
     import alpha_engine.narrative.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.requests, "post", fake_post)
+    monkeypatch.setattr(llm_mod.net, "post", fake_post)
 
     sig = _signal()
     result = rewrite_thesis(sig, "original template")
@@ -215,7 +215,7 @@ def test_rewrite_thesis_falls_back_on_malformed_response(monkeypatch):
 
     import alpha_engine.narrative.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.requests, "post", fake_post)
+    monkeypatch.setattr(llm_mod.net, "post", fake_post)
 
     sig = _signal()
     result = rewrite_thesis(sig, "original template")
@@ -246,7 +246,7 @@ def test_rewrite_thesis_rejects_llm_output_that_changes_numbers(monkeypatch):
 
     import alpha_engine.narrative.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.requests, "post", fake_post)
+    monkeypatch.setattr(llm_mod.net, "post", fake_post)
 
     # Simulate a pipeline bug: after the LLM call, the candidate signal
     # has a different confidence. The validation should catch this.
@@ -283,7 +283,7 @@ def test_rewrite_thesis_accepts_llm_output_that_only_rephrases(monkeypatch):
 
     import alpha_engine.narrative.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.requests, "post", fake_post)
+    monkeypatch.setattr(llm_mod.net, "post", fake_post)
 
     sig = _signal()
     result = rewrite_thesis(sig, "original template")
@@ -314,7 +314,7 @@ def test_rewrite_thesis_uses_custom_model_and_api_base(monkeypatch):
 
     import alpha_engine.narrative.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.requests, "post", fake_post)
+    monkeypatch.setattr(llm_mod.net, "post", fake_post)
 
     sig = _signal()
     result = rewrite_thesis(sig, "template")
@@ -332,7 +332,7 @@ def test_write_thesis_with_llm_false_never_calls_llm(monkeypatch):
 
     import alpha_engine.narrative.llm as llm_mod
 
-    monkeypatch.setattr(llm_mod.requests, "post", fail_post)
+    monkeypatch.setattr(llm_mod.net, "post", fail_post)
 
     sig = _signal()
     result = write_thesis(sig, use_llm=False)

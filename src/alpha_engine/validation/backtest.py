@@ -25,13 +25,12 @@ point of this module: improvement happens against measured truth, not vibes.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from pydantic import BaseModel
 
 from alpha_engine.analyzers.bollinger import analyze_bollinger
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
-from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.analyzers.forex_trend import analyze_forex_trend
 from alpha_engine.analyzers.macd import analyze_macd
 from alpha_engine.analyzers.macro_context import analyze_macro
@@ -59,7 +58,7 @@ DEFAULT_WARMUP = 80
 # Which price-structure analyzer anchors each market.
 _TREND_ANALYZER = {
     Market.CRYPTO: analyze_trend,
-    Market.US_EQUITY: analyze_equity_trend,
+    Market.US_EQUITY: lambda s: analyze_trend(s, name="equity.trend"),
     Market.FOREX: analyze_forex_trend,
 }
 
@@ -141,7 +140,7 @@ def signal_at(
     elif market is Market.FOREX:
         sources.append(analyze_forex_trend(past))
     else:
-        sources.append(analyze_equity_trend(past))
+        sources.append(analyze_trend(past, name="equity.trend"))
 
     sources.append(analyze_rsi(past))
     sources.append(analyze_macd(past))
@@ -278,7 +277,7 @@ def run_per_analyzer_backtest(
     This is the honest comparison table: does blending actually beat the
     single inputs on this asset, and which input is carrying the result?
     """
-    trend_anchor = _TREND_ANALYZER.get(market, analyze_equity_trend)
+    trend_anchor = _TREND_ANALYZER.get(market, lambda s: analyze_trend(s, name="equity.trend"))
     reports: dict[str, BacktestReport] = {
         "trend": run_analyzer_backtest(
             series, trend_anchor, market=market, timeframe=timeframe, warmup=warmup, step=step

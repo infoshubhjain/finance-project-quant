@@ -14,53 +14,29 @@ _DOTENV_FILENAMES = (".env.local", ".env")
 _ENV_LOADED = False
 
 
-def _strip_inline_comment(value: str) -> str:
-    in_quotes = False
-    quote_char = ""
-    out: list[str] = []
-    i = 0
-    while i < len(value):
-        ch = value[i]
-        if ch in {"'", '"'}:
-            if in_quotes and ch == quote_char:
-                in_quotes = False
-                quote_char = ""
-            elif not in_quotes:
-                in_quotes = True
-                quote_char = ch
-            out.append(ch)
-        elif ch == "#" and not in_quotes:
-            break
-        else:
-            out.append(ch)
-        i += 1
-    return "".join(out).strip()
-
-
-def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
-        return value[1:-1]
-    return value
-
-
 def _load_env_file(path: Path) -> None:
-    """Parse a .env file: one KEY=VALUE per line, `export` prefix allowed,
-    quotes and quote-aware inline comments handled. Values are single-line —
-    every key this project uses is a token, so multi-line support would be
-    parser complexity with no user."""
+    """Parse a .env file: one KEY=VALUE per line, `export` prefix allowed.
+    Every key this project uses is a bare token (API keys, model names), so
+    quote/comment handling would be solving a problem that doesn't exist."""
     for line in path.read_text().splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         if line.startswith("export "):
-            line = line[len("export ") :].strip()
+            line = line.removeprefix("export ").strip()
         if "=" not in line:
             continue
-        key, raw_value = line.split("=", 1)
+        key, value = line.split("=", 1)
         key = key.strip()
-        if not key or key in os.environ:
-            continue
-        os.environ[key] = _unquote(_strip_inline_comment(raw_value.strip()))
+        value = value.strip()
+        # Strip inline comments (# onwards)
+        if "#" in value:
+            value = value.split("#", 1)[0].strip()
+        # Strip surrounding quotes if present (common .env convention)
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+            value = value[1:-1]
+        if key and key not in os.environ:
+            os.environ[key] = value
 
 
 def load_project_env() -> None:

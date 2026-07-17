@@ -4,9 +4,6 @@ The live provider clients belong here in spirit, but they should stay separate
 from the normalization code in `indian_fno.py`. This module defines the shape
 of a broker session and the config we expect from env vars so a real Angel One
 or Breeze client can be slotted in without touching analyzers.
-
-No network calls happen here yet. That is intentional: the project should stay
-honest about what is implemented versus what is merely wired for extension.
 """
 
 from __future__ import annotations
@@ -14,10 +11,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
-
-from alpha_engine.cache.models import OptionsChain
-from alpha_engine.ingestion.indian_fno import parse_indian_chain_payload
 
 
 class IndianBroker(str, Enum):
@@ -40,12 +33,6 @@ class BrokerCredentials:
     client_id: str | None = None
     access_token: str | None = None
     user_id: str | None = None
-
-
-class IndianBrokerClient(Protocol):
-    """Provider clients fetch a raw payload and hand it to the normalizer."""
-
-    def fetch_chain(self, underlying: str) -> dict: ...
 
 
 class BrokerNotConfiguredError(RuntimeError):
@@ -95,8 +82,3 @@ def load_broker_credentials(broker: IndianBroker) -> BrokerCredentials:
         user_id=os.getenv("BREEZE_USER_ID"),
         access_token=os.getenv("BREEZE_SESSION_TOKEN"),
     )
-
-
-def normalize_broker_payload(payload: dict, underlying: str | None = None) -> OptionsChain:
-    """Normalize a live broker payload into the shared chain model."""
-    return parse_indian_chain_payload(payload, underlying=underlying)

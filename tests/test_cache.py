@@ -145,7 +145,7 @@ def test_price_round_trip_preserves_data(tmp_path):
     now = datetime.now(timezone.utc)
     original = _price_series(fetched_at=now)
     cache.put_price(original)
-    loaded, stale = cache.get_price("BTC", "1d")
+    loaded, _stale = cache.get_price("BTC", "1d")
     assert loaded is not None
     assert loaded.asset == original.asset
     assert len(loaded.candles) == len(original.candles)
@@ -157,7 +157,7 @@ def test_macro_round_trip_preserves_data(tmp_path):
     now = datetime.now(timezone.utc)
     original = _macro_obs(ts=now)
     cache.put_macro(original)
-    loaded, stale = cache.get_macro("FEDFUNDS")
+    loaded, _stale = cache.get_macro("FEDFUNDS")
     assert len(loaded) == 1
     assert loaded[0].value == 5.25
 
@@ -167,7 +167,7 @@ def test_chain_round_trip_preserves_data(tmp_path):
     now = datetime.now(timezone.utc)
     original = _chain(fetched_at=now)
     cache.put_chain(original)
-    loaded, stale = cache.get_chain("NIFTY")
+    loaded, _stale = cache.get_chain("NIFTY")
     assert loaded is not None
     assert loaded.underlying == "NIFTY"
     assert len(loaded.quotes) == 2

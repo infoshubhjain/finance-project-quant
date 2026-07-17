@@ -51,10 +51,17 @@ def _number(raw: object, field: str) -> float:
         raise ValueError(f"{field} is missing")
     if isinstance(raw, bool):
         raise ValueError(f"{field} must be numeric")
-    try:
+    if isinstance(raw, (int, float)):
         return float(raw)
-    except (TypeError, ValueError) as e:
-        raise ValueError(f"{field} must be numeric, got {raw!r}") from e
+    if isinstance(raw, str):
+        stripped = raw.strip()
+        if not stripped:
+            raise ValueError(f"{field} must be numeric, got {raw!r}")
+        try:
+            return float(stripped)
+        except ValueError as e:
+            raise ValueError(f"{field} must be numeric, got {raw!r}") from e
+    raise ValueError(f"{field} must be numeric, got {raw!r}")
 
 
 def _option_quote(row: dict, side: str) -> OptionQuote | None:

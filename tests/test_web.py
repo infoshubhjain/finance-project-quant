@@ -40,7 +40,9 @@ def _signal(asset: str = "BTC", confidence: float = 0.7) -> Signal:
         direction=Direction.BULLISH,
         confidence=confidence,
         timeframe=Timeframe.SWING,
-        signal_sources=[SignalSource(name="t", direction=Direction.BULLISH, weight=0.6)],
+        signal_sources=[SignalSource(name="t", direction=Direction.BULLISH, weight=0.6, detail="")],
+        invalidation_level=None,
+        thesis="",
         timestamp=T0,
     )
 
@@ -146,7 +148,7 @@ def test_api_dashboard_returns_json(server_url):
 
 
 def test_api_asset_returns_json(server_url):
-    status, body, ctype = _get(server_url + "/api/asset/BTC")
+    status, body, _ctype = _get(server_url + "/api/asset/BTC")
     assert status == 200
     payload = json.loads(body)
     assert payload["asset"] == "BTC"

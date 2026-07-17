@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -80,7 +79,7 @@ class Signal(BaseModel):
         default_factory=list, description="every input that fed this signal"
     )
 
-    invalidation_level: Optional[float] = Field(
+    invalidation_level: float | None = Field(
         None,
         description="price at which the thesis is wrong. The most honest field in "
         "the schema. None only if genuinely not applicable.",

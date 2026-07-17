@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from alpha_engine.cache.models import Candle, Interval, PriceSeries
 from alpha_engine.analyzers.crypto_trend import analyze_trend
+from alpha_engine.cache.models import Candle, Interval, PriceSeries
 from alpha_engine.schema.signal import (
     Direction,
     Market,
@@ -43,6 +43,8 @@ def test_schema_rejects_blank_asset():
             direction=Direction.NEUTRAL,
             confidence=0.0,
             timeframe=Timeframe.SWING,
+            invalidation_level=None,
+            thesis="",
         )
 
 
@@ -55,6 +57,8 @@ def test_schema_requires_utc_timestamp():
             confidence=0.0,
             timeframe=Timeframe.SWING,
             timestamp=datetime(2024, 1, 1),  # naive
+            invalidation_level=None,
+            thesis="",
         )
 
 
@@ -66,6 +70,8 @@ def test_confidence_bounds_enforced():
             direction=Direction.BULLISH,
             confidence=1.5,
             timeframe=Timeframe.SWING,
+            invalidation_level=None,
+            thesis="",
         )
 
 
@@ -96,15 +102,15 @@ def test_trend_is_deterministic():
 
 
 def test_synthesis_single_bullish_source():
-    src = SignalSource(name="t", direction=Direction.BULLISH, weight=0.8)
+    src = SignalSource(name="t", direction=Direction.BULLISH, weight=0.8, detail="test")
     sig = synthesize("BTC", Market.CRYPTO, [src])
     assert sig.direction is Direction.BULLISH
     assert 0.0 <= sig.confidence <= 1.0
 
 
 def test_synthesis_contradictory_sources_lower_confidence():
-    bull = SignalSource(name="a", direction=Direction.BULLISH, weight=0.8)
-    bear = SignalSource(name="b", direction=Direction.BEARISH, weight=0.8)
+    bull = SignalSource(name="a", direction=Direction.BULLISH, weight=0.8, detail="test")
+    bear = SignalSource(name="b", direction=Direction.BEARISH, weight=0.8, detail="test")
     sig = synthesize("BTC", Market.CRYPTO, [bull, bear])
     # equal and opposite -> neutral, near-zero confidence
     assert sig.direction is Direction.NEUTRAL
@@ -120,11 +126,11 @@ def test_synthesis_empty_sources_is_neutral():
 def test_confidence_lower_with_fewer_sources():
     """One source should produce lower confidence than three agreeing sources,
     even with the same agreement quality. This tests the source-count cap."""
-    single = [SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8)]
+    single = [SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8, detail="test")]
     triple = [
-        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
-        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7),
-        SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.9),
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8, detail="test"),
+        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7, detail="test"),
+        SignalSource(name="crypto.trend", direction=Direction.BULLISH, weight=0.9, detail="test"),
     ]
     sig1 = synthesize("BTC", Market.CRYPTO, single)
     sig3 = synthesize("BTC", Market.CRYPTO, triple)
@@ -135,12 +141,12 @@ def test_confidence_lower_with_disagreement():
     """When sources disagree, confidence should drop even if the net direction
     is clear."""
     agree = [
-        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
-        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7),
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8, detail="test"),
+        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7, detail="test"),
     ]
     disagree = [
-        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
-        SignalSource(name="bollinger", direction=Direction.BEARISH, weight=0.7),
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8, detail="test"),
+        SignalSource(name="bollinger", direction=Direction.BEARISH, weight=0.7, detail="test"),
     ]
     sig_agree = synthesize("BTC", Market.CRYPTO, agree)
     sig_disagree = synthesize("BTC", Market.CRYPTO, disagree)
@@ -154,7 +160,7 @@ def test_confidence_lower_with_disagreement():
 
 def test_confidence_never_exceeds_source_count_cap():
     """Confidence with 1 source should never exceed 0.45."""
-    src = SignalSource(name="rsi", direction=Direction.BULLISH, weight=1.0)
+    src = SignalSource(name="rsi", direction=Direction.BULLISH, weight=1.0, detail="")
     sig = synthesize("BTC", Market.CRYPTO, [src])
     assert sig.confidence <= 0.45
 
@@ -162,8 +168,8 @@ def test_confidence_never_exceeds_source_count_cap():
 def test_confidence_is_deterministic():
     """Same inputs must always produce the same confidence."""
     sources = [
-        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8),
-        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7),
+        SignalSource(name="rsi", direction=Direction.BULLISH, weight=0.8, detail="test"),
+        SignalSource(name="bollinger", direction=Direction.BULLISH, weight=0.7, detail="test"),
     ]
     a = synthesize("BTC", Market.CRYPTO, sources)
     b = synthesize("BTC", Market.CRYPTO, sources)

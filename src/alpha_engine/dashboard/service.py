@@ -52,8 +52,10 @@ def build_dashboard_payload(
 
         # One disk read per asset, not per record: with thousands of records
         # per asset, re-reading the same price JSON dominated request time.
+        from alpha_engine.validation.outcomes import Outcome
+
         series_cache: dict[str, PriceSeries | None] = {}
-        scored: list[tuple[float, object]] = []
+        scored: list[tuple[float, Outcome]] = []
         for record in records:
             asset = record.signal.asset
             if asset not in series_cache:
@@ -74,9 +76,28 @@ def build_dashboard_payload(
             asset = record.signal.asset
             if asset not in series_cache:
                 series_cache[asset] = cache.get_price(asset, "1d")[0]
-            if series_cache[asset] is not None:
-                series_by_asset[asset] = series_cache[asset]
+            cached = series_cache[asset]
+            if cached is not None:
+                series_by_asset[asset] = cached
         portfolio = build_portfolio_view([r.signal for r in latest], series_by_asset)
+
+        # Risk report: position sizing, VaR/CVaR, concentration, regime gate
+        from alpha_engine.analyzers.risk import build_risk_report
+        from alpha_engine.quant.models import fit_hmm
+
+        risk_signals = [r.signal for r in latest]
+        hmm = None
+        longest = max(series_by_asset.values(), key=lambda s: len(s.candles), default=None)
+        if longest is not None and len(longest.candles) >= 40:
+            closes = [c.close for c in longest.candles]
+            actual_rets = [
+                (closes[i] / closes[i - 1]) - 1.0
+                for i in range(1, len(closes))
+                if closes[i - 1] > 0
+            ]
+            if len(actual_rets) >= 40:
+                hmm = fit_hmm(actual_rets)
+        risk = build_risk_report(risk_signals, series_by_asset, hmm=hmm)
 
         return {
             "total_records": len(records),
@@ -101,6 +122,7 @@ def build_dashboard_payload(
             ],
             "outcomes": summarize_outcomes(scored).model_dump(mode="json"),
             "portfolio": portfolio.model_dump(mode="json"),
+            "risk": risk.model_dump(mode="json"),
         }
 
 

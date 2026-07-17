@@ -49,6 +49,26 @@ SOURCE_RELIABILITY: dict[str, float] = {
 # Default reliability for unknown analyzer types
 _DEFAULT_RELIABILITY = 0.50
 
+# Override defaults with calibrated values if data/calibration.json exists.
+# Fresh clones get the hardcoded defaults; running `calibrate` writes the
+# file, and the next process picks it up. Deliberately import-time so the
+# synthesis path stays pure (no file I/O per call).
+try:
+    from alpha_engine.validation.calibrate import load_calibration
+
+    _calibrated = load_calibration()
+    if _calibrated:
+        SOURCE_RELIABILITY.update(_calibrated)
+        import sys
+
+        print(
+            f"[calibrate] loaded reliability for {len(_calibrated)} analyzers "
+            f"from data/calibration.json",
+            file=sys.stderr,
+        )
+except Exception:  # noqa: BLE001 — fresh clone or missing data
+    pass
+
 # Maximum confidence achievable with a given number of independent sources.
 # With 1 source: capped at 0.45 (honestly uncertain).
 # With 2 sources: capped at 0.60.

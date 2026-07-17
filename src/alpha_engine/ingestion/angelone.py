@@ -1,7 +1,7 @@
 """Live Angel One adapter for Indian options-chain data.
 
 Angel One's SmartAPI provides market data via a REST API. Like the Breeze
-adapter, this uses plain `requests` instead of the SDK to avoid import-time
+adapter, this uses the stdlib HTTP helper (`alpha_engine.net`) instead of the SDK to avoid import-time
 side effects and keep the code deterministic and testable.
 
 The adapter is credential-gated: it fails fast with a descriptive message
@@ -19,8 +19,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.models import OptionsChain
 from alpha_engine.ingestion.indian_broker import (
     BrokerCredentials,
@@ -52,16 +51,16 @@ def _get_with_retry(
     params: dict[str, str],
     headers: dict[str, str],
     timeout: int = 20,
-) -> requests.Response:
+) -> net.Response:
     """GET with retries on rate-limit (429) and transient server errors.
 
     Honors a Retry-After header when the API sends one; otherwise waits
     2s, 4s, 8s. The final attempt's response is returned as-is so the
     caller's raise_for_status() surfaces the real error message.
     """
-    resp: requests.Response | None = None
+    resp: net.Response | None = None
     for attempt in range(_MAX_RETRIES + 1):
-        resp = requests.get(url, params=params, headers=headers, timeout=timeout)
+        resp = net.get(url, params=params, headers=headers, timeout=timeout)
         if resp.status_code not in _RETRYABLE_STATUSES or attempt == _MAX_RETRIES:
             return resp
         retry_after = resp.headers.get("Retry-After")

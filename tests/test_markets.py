@@ -12,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from alpha_engine.analyzers.crypto_trend import analyze_trend
-from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.analyzers.macro_context import MAX_WEIGHT, analyze_macro
 from alpha_engine.cache.models import Candle, Interval, MacroObservation, PriceSeries
 from alpha_engine.cli.main import detect_market
@@ -114,7 +113,7 @@ def test_fred_parse_normalizes_and_skips_missing():
 
 
 def test_equity_trend_rising_is_bullish_with_own_name():
-    src = analyze_equity_trend(_series([float(i) for i in range(1, 60)]))
+    src = analyze_trend(_series([float(i) for i in range(1, 60)]), name="equity.trend")
     assert src.name == "equity.trend"
     assert src.direction is Direction.BULLISH
     assert src.weight > 0
@@ -124,7 +123,7 @@ def test_equity_trend_numbers_match_crypto_delegate():
     # Pins today's deliberate delegation. When equity logic diverges, this test
     # should be updated to pin the divergence instead.
     series = _series([100.0 + ((i * 3) % 7) + i * 0.2 for i in range(60)])
-    equity = analyze_equity_trend(series)
+    equity = analyze_trend(series, name="equity.trend")
     crypto = analyze_trend(series)
     assert equity.weight == crypto.weight
     assert equity.direction is crypto.direction
@@ -175,8 +174,12 @@ def test_macro_is_deterministic():
 
 
 def test_synthesis_blends_trend_and_macro():
-    trend = SignalSource(name="equity.trend", direction=Direction.BULLISH, weight=0.6)
-    macro = SignalSource(name="macro.context", direction=Direction.BEARISH, weight=0.3)
+    trend = SignalSource(
+        name="equity.trend", direction=Direction.BULLISH, weight=0.6, detail="test"
+    )
+    macro = SignalSource(
+        name="macro.context", direction=Direction.BEARISH, weight=0.3, detail="test"
+    )
 
     blended = synthesize("AAPL", Market.US_EQUITY, [trend, macro])
     trend_only = synthesize("AAPL", Market.US_EQUITY, [trend])
@@ -188,13 +191,22 @@ def test_synthesis_blends_trend_and_macro():
 
 
 def test_synthesis_agreeing_macro_raises_confidence():
-    trend = SignalSource(name="equity.trend", direction=Direction.BULLISH, weight=0.6)
-    macro = SignalSource(name="macro.context", direction=Direction.BULLISH, weight=0.3)
+    trend = SignalSource(
+        name="equity.trend", direction=Direction.BULLISH, weight=0.6, detail="test"
+    )
+    macro = SignalSource(
+        name="macro.context", direction=Direction.BULLISH, weight=0.3, detail="test"
+    )
     blended = synthesize("AAPL", Market.US_EQUITY, [trend, macro])
     contradicted = synthesize(
         "AAPL",
         Market.US_EQUITY,
-        [trend, SignalSource(name="macro.context", direction=Direction.BEARISH, weight=0.3)],
+        [
+            trend,
+            SignalSource(
+                name="macro.context", direction=Direction.BEARISH, weight=0.3, detail="test"
+            ),
+        ],
     )
     assert blended.confidence > contradicted.confidence
 

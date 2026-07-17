@@ -74,7 +74,12 @@ def build_portfolio_view(
     """
     directional = [s for s in signals if s.direction is not Direction.NEUTRAL]
 
-    view = PortfolioView(signal_count=len(signals), directional_count=len(directional))
+    view = PortfolioView(
+        signal_count=len(signals),
+        directional_count=len(directional),
+        net_bias=0.0,
+        diversification_score=None,
+    )
     if not directional:
         return view
 
@@ -100,10 +105,10 @@ def build_portfolio_view(
             matrix = correlation_matrix(covered, window=window)
             view.correlations = matrix
             pair_values = [
-                matrix.matrix[i][j]
+                v
                 for i in range(len(matrix.assets))
                 for j in range(i + 1, len(matrix.assets))
-                if matrix.matrix[i][j] is not None
+                if (v := matrix.matrix[i][j]) is not None
             ]
             if pair_values:
                 avg_abs = sum(abs(v) for v in pair_values) / len(pair_values)

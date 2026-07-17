@@ -8,17 +8,17 @@ from alpha_engine.ingestion.indian_broker import (
     BrokerNotConfiguredError,
     IndianBroker,
     load_broker_credentials,
-    normalize_broker_payload,
 )
+from alpha_engine.ingestion.indian_fno import parse_indian_chain_payload
 
 
-def test_normalize_broker_payload_uses_shared_chain_shape():
+def test_parse_indian_chain_payload_uses_shared_chain_shape():
     payload = {
         "underlying": "NIFTY",
         "expiry": "2026-07-30T00:00:00Z",
         "records": [{"strikePrice": 20000, "CE": {"openInterest": 1000}}],
     }
-    chain = normalize_broker_payload(payload)
+    chain = parse_indian_chain_payload(payload)
     assert chain.underlying == "NIFTY"
     assert len(chain.quotes) == 1
 

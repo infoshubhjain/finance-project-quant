@@ -27,9 +27,10 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
+from alpha_engine.analyzers.bollinger import analyze_bollinger
 from alpha_engine.analyzers.crypto_trend import analyze_trend, trend_invalidation
-from alpha_engine.analyzers.equity_trend import analyze_equity_trend
 from alpha_engine.analyzers.fno_oi import analyze_fno, oi_support_resistance
 from alpha_engine.analyzers.forex_trend import analyze_forex_trend
 from alpha_engine.analyzers.macd import analyze_macd
@@ -38,13 +39,12 @@ from alpha_engine.analyzers.multi_timeframe import analyze_multi_timeframe
 from alpha_engine.analyzers.rsi import analyze_rsi
 from alpha_engine.analyzers.support_resistance import analyze_support_resistance
 from alpha_engine.analyzers.volatility import analyze_volatility, volatility_scalar
-from alpha_engine.analyzers.vwap import analyze_vwap
-from alpha_engine.analyzers.bollinger import analyze_bollinger
 from alpha_engine.analyzers.volume import analyze_volume
+from alpha_engine.analyzers.vwap import analyze_vwap
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
-from alpha_engine.ingestion.breeze import BreezeLiveClient
 from alpha_engine.ingestion import binance, coingecko, coingecko_pro, fred, oanda, yahoo
+from alpha_engine.ingestion.breeze import BreezeLiveClient
 from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
 from alpha_engine.ingestion.indian_fno import load_indian_chain
 from alpha_engine.narrative.narrator import write_thesis
@@ -54,7 +54,6 @@ from alpha_engine.synthesis.synthesize import synthesize
 from alpha_engine.validation.backtest import run_backtest, run_per_analyzer_backtest
 from alpha_engine.validation.outcomes import score_record, summarize_outcomes
 from alpha_engine.validation.recorder import read_records, record_signal
-
 
 # Indian index symbols that route to the F&O path. Extend as chains land.
 _IN_FNO_SYMBOLS = {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "SENSEX"}
@@ -338,7 +337,7 @@ def _build_price_signal(
     elif market is Market.FOREX:
         sources.append(analyze_forex_trend(series))
     else:
-        sources.append(analyze_equity_trend(series))
+        sources.append(analyze_trend(series, name="equity.trend"))
 
     sources.append(analyze_rsi(series))
     sources.append(analyze_macd(series))
@@ -588,11 +587,13 @@ def cmd_scan_all(args: argparse.Namespace) -> int:
     print(f"[scan-all] scanning {len(config.targets)} assets...", file=sys.stderr)
     report = run_batch(config)
 
+    summary = report.summary()
     print(
-        f"\n[scan-all] done: {report.ok}/{report.total} ok, {report.errors} errors", file=sys.stderr
+        f"\n[scan-all] done: {summary['ok']}/{summary['total']} ok, {summary['errors']} errors",
+        file=sys.stderr,
     )
-    print(json.dumps(report.summary(), indent=2))
-    return 0 if report.errors == 0 else 1
+    print(json.dumps(summary, indent=2))
+    return 0 if summary["errors"] == 0 else 1
 
 
 def cmd_batch(args: argparse.Namespace) -> int:
@@ -617,8 +618,12 @@ def cmd_batch(args: argparse.Namespace) -> int:
     if output:
         print(f"[batch] report written to {output}", file=sys.stderr)
 
-    print(f"[batch] done: {report.ok}/{report.total} ok, {report.errors} errors", file=sys.stderr)
-    return 0 if report.errors == 0 else 1
+    summary = report.summary()
+    print(
+        f"[batch] done: {summary['ok']}/{summary['total']} ok, {summary['errors']} errors",
+        file=sys.stderr,
+    )
+    return 0 if summary["errors"] == 0 else 1
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
@@ -639,6 +644,216 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
             file=_sys.stderr,
         )
         return 1
+
+
+def cmd_factors(args: argparse.Namespace) -> int:
+    """Rank factors by predictive power for one asset."""
+
+    from alpha_engine.cache.interface import Cache
+    from alpha_engine.quant.features import compute_factor_panel
+    from alpha_engine.quant.ranking import rank_factors
+
+    market = detect_market(args.asset, getattr(args, "market", None))
+    cache = Cache()
+
+    if market is Market.IN_FNO:
+        print("[error] factor ranking requires a price series (not F&O)", file=sys.stderr)
+        return 1
+
+    series = _load_series(args.asset, market, args.days, getattr(args, "no_refresh", False), cache)
+    if not series or not series.candles:
+        print(f"[error] no data for {args.asset}", file=sys.stderr)
+        return 1
+
+    print(
+        f"[ranking] computing factor panel for {args.asset} ({len(series.candles)} bars)...",
+        file=sys.stderr,
+    )
+
+    panel = compute_factor_panel(series, window=20)
+    scores = rank_factors(series, panel, horizon=args.horizon)
+
+    if getattr(args, "json", False):
+        json_out = [
+            {
+                "factor": s.name,
+                "rank_ic": s.rank_ic,
+                "hit_rate": s.hit_rate,
+                "coverage": round(s.coverage, 3),
+                "t_stat": s.t_stat,
+                "ic_decay": s.ic_by_horizon,
+            }
+            for s in scores
+        ]
+        print(json.dumps(json_out, indent=2))
+    else:
+        # Table header
+        header = f"{'factor':<30} {'rank_ic':>8} {'t_stat':>7} {'hit_rate':>9} {'coverage':>9} {'ic(1)':>7} {'ic(5)':>7} {'ic(10)':>7} {'ic(20)':>7}"
+        print(f"\nFactor ranking for {args.asset} (horizon={args.horizon})\n")
+        print(header)
+        print("-" * len(header))
+        for s in scores:
+            ic_str = f"{s.rank_ic:+.4f}" if s.rank_ic is not None else "   none"
+            t_str = f"{s.t_stat:+5.2f}" if s.t_stat is not None else "  none"
+            hr_str = f"{s.hit_rate:.1%}" if s.hit_rate is not None else "   none"
+            cov_str = f"{s.coverage:.1%}" if s.coverage > 0 else "   none"
+            ic1 = (
+                f"{s.ic_by_horizon.get(1, None):+.4f}"
+                if s.ic_by_horizon.get(1) is not None
+                else "   none"
+            )
+            ic5 = (
+                f"{s.ic_by_horizon.get(5, None):+.4f}"
+                if s.ic_by_horizon.get(5) is not None
+                else "   none"
+            )
+            ic10 = (
+                f"{s.ic_by_horizon.get(10, None):+.4f}"
+                if s.ic_by_horizon.get(10) is not None
+                else "   none"
+            )
+            ic20 = (
+                f"{s.ic_by_horizon.get(20, None):+.4f}"
+                if s.ic_by_horizon.get(20) is not None
+                else "   none"
+            )
+            print(
+                f"{s.name:<30} {ic_str:>8} {t_str:>7} {hr_str:>9} {cov_str:>9} {ic1:>7} {ic5:>7} {ic10:>7} {ic20:>7}"
+            )
+        print()
+
+    return 0
+
+
+def cmd_risk(args: argparse.Namespace) -> int:
+    """Portfolio risk report: position sizing, VaR/CVaR, concentration, regime gate.
+
+    Reads the latest recorded signals and cached prices, then produces a
+    risk context report. All outputs are research context, not trading
+    instructions.
+    """
+    from alpha_engine.analyzers.risk import build_risk_report
+    from alpha_engine.quant.models import fit_hmm
+    from alpha_engine.validation.recorder import read_records
+
+    records = read_records()
+    if not records:
+        print("[risk] no recorded signals yet; run `scan` first.", file=sys.stderr)
+        return 0
+
+    # Latest signal per asset
+    latest: dict[str, Any] = {}
+    for record in records:
+        asset = record.signal.asset
+        existing = latest.get(asset)
+        if existing is None or record.recorded_at > existing.recorded_at:
+            latest[asset] = record
+
+    signals = [rec.signal for rec in latest.values()]
+
+    # Load cached series for each asset
+    cache = Cache()
+    series_by_asset: dict[str, Any] = {}
+    for signal in signals:
+        series, _stale = cache.get_price(signal.asset, "1d")
+        if series is not None:
+            series_by_asset[signal.asset] = series
+
+    # Fit HMM on the broadest available series for regime gate
+    hmm = None
+    longest_series = max(series_by_asset.values(), key=lambda s: len(s.candles), default=None)
+    if longest_series is not None and len(longest_series.candles) >= 40:
+        closes = [c.close for c in longest_series.candles]
+        actual_rets = [
+            (closes[i] / closes[i - 1]) - 1.0 for i in range(1, len(closes)) if closes[i - 1] > 0
+        ]
+        if len(actual_rets) >= 40:
+            hmm = fit_hmm(actual_rets)
+
+    report = build_risk_report(signals, series_by_asset, hmm=hmm)
+
+    if getattr(args, "json", False):
+        print(report.model_dump_json(indent=2))
+    else:
+        _render_risk_text(report)
+
+    return 0
+
+
+def _render_risk_text(report: Any) -> None:
+    """Human-readable risk report block."""
+    lines: list[str] = ["Portfolio Risk Report", "=" * 22, ""]
+
+    # Regime gate
+    lines.append(
+        f"Regime Gate:      {report.regime_gate} (confidence: {report.regime_confidence:.0%})"
+    )
+    lines.append(f"Risk Score:       {report.risk_score}/100 (100 = minimal risk)")
+    lines.append("")
+
+    # Position sizing
+    if report.position_sizes:
+        lines.append("Position Sizing (inverse-volatility)")
+        lines.append("-" * 40)
+        for ps in report.position_sizes:
+            lines.append(
+                f"  {ps.asset:<8} weight={ps.weight:.1%}  "
+                f"daily_vol={ps.daily_vol:.2%}  ann_vol={ps.annualized_vol:.1%}"
+            )
+        lines.append("")
+
+    # Tail risk
+    if report.tail_risks:
+        lines.append("Tail Risk (95% confidence, trailing 60 bars)")
+        lines.append("-" * 40)
+        for tr in report.tail_risks:
+            lines.append(
+                f"  {tr.asset:<8} VaR={tr.var_95:+.2%}  CVaR={tr.cvar_95:+.2%}  "
+                f"max_dd={tr.max_drawdown:+.2%}  cur_dd={tr.current_drawdown:+.2%}"
+            )
+        lines.append("")
+
+    # Concentration
+    if report.concentration_warnings:
+        lines.append("Concentration Warnings")
+        lines.append("-" * 40)
+        for w in report.concentration_warnings:
+            lines.append(f"  {w}")
+        lines.append("")
+
+    lines.append("Research output only, not investment advice.")
+    print("\n".join(lines))
+
+
+def cmd_calibrate(args: argparse.Namespace) -> int:
+    """Offline calibration: compute per-analyzer reliability from recorded signals.
+
+    Reads the signal log, scores each signal against cached prices, groups
+    by analyzer name, applies Bayesian shrinkage, and optionally writes the
+    result to data/calibration.json. Deliberately offline and human-invoked.
+    """
+    from alpha_engine.validation.calibrate import (
+        calibrate,
+        write_calibration,
+    )
+
+    result = calibrate(
+        min_samples=args.min_samples,
+        shrinkage_k=args.shrinkage_k,
+    )
+
+    if args.dry_run:
+        print(result.model_dump_json(indent=2))
+        return 0
+
+    path = write_calibration(result)
+    print(f"[calibrate] wrote {len(result.analyzers)} analyzer reliabilities to {path}")
+    print(f"[calibrate] window: {result.window_records} records, {result.window_resolved} resolved")
+    if any(a.used_default for a in result.analyzers):
+        defaults = [a.name for a in result.analyzers if a.used_default]
+        print(f"[calibrate] below min_samples ({args.min_samples}), kept default 0.50: {defaults}")
+
+    return 0
 
 
 def _add_market_args(sub: argparse.ArgumentParser, default_days: int) -> None:
@@ -779,6 +994,45 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--host", default="127.0.0.1", help="bind address")
     dashboard.add_argument("--port", type=int, default=8000, help="port to listen on")
     dashboard.set_defaults(func=cmd_dashboard)
+
+    factors = sub.add_parser(
+        "factors",
+        help="factor ranking: which features predict forward returns",
+    )
+    _add_market_args(factors, default_days=365)
+    factors.add_argument("--horizon", type=int, default=10, help="forward return horizon in bars")
+    factors.add_argument("--json", action="store_true", help="emit the full ranking as JSON")
+    factors.set_defaults(func=cmd_factors)
+
+    risk = sub.add_parser(
+        "risk",
+        help="portfolio risk report: position sizing, VaR/CVaR, concentration, regime gate",
+    )
+    risk.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    risk.set_defaults(func=cmd_risk)
+
+    calibrate = sub.add_parser(
+        "calibrate",
+        help="compute per-analyzer reliability from recorded signals (offline, human-invoked)",
+    )
+    calibrate.add_argument(
+        "--min-samples",
+        type=int,
+        default=50,
+        help="minimum resolved signals per analyzer to override default (default: 50)",
+    )
+    calibrate.add_argument(
+        "--shrinkage-k",
+        type=float,
+        default=30.0,
+        help="Bayesian shrinkage parameter (default: 30)",
+    )
+    calibrate.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the calibration result without writing to disk",
+    )
+    calibrate.set_defaults(func=cmd_calibrate)
 
     return p
 

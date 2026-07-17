@@ -91,7 +91,11 @@ def score_forward(
             )
 
     if len(window) < horizon:
-        return Outcome(status=OutcomeStatus.PENDING, bars_evaluated=len(window))
+        return Outcome(
+            status=OutcomeStatus.PENDING,
+            realized_return=None,
+            bars_evaluated=len(window),
+        )
 
     exit_price = window[-1].close
     raw = (exit_price - entry_price) / entry_price
@@ -112,7 +116,10 @@ def score_record(record: SignalRecord, series: PriceSeries) -> Outcome:
     """
     signal = record.signal
     if signal.direction is Direction.NEUTRAL or not record.entry_price:
-        return Outcome(status=OutcomeStatus.NOT_APPLICABLE)
+        return Outcome(
+            status=OutcomeStatus.NOT_APPLICABLE,
+            realized_return=None,
+        )
 
     future = [c for c in series.candles if c.ts > signal.timestamp]
     return score_forward(

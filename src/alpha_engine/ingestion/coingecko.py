@@ -13,8 +13,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import Candle, Interval, PriceSeries
 
@@ -60,7 +59,7 @@ def fetch_daily(
     # The keyless /ohlc endpoint is too sparse for multi-bar moving averages, so we
     # use market_chart and treat each daily close as the bar. (OHLC detail can be
     # layered back in later from a keyed source without changing anything downstream.)
-    resp = requests.get(
+    resp = net.get(
         f"{base}/coins/{coin_id}/market_chart",
         params={"vs_currency": "usd", "days": str(days), "interval": "daily"},
         headers=headers,

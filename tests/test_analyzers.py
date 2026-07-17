@@ -7,21 +7,21 @@ No network, no LLM, no randomness.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
-
-from alpha_engine.analyzers.rsi import _rsi, analyze_rsi
 from alpha_engine.analyzers.bollinger import _bollinger_bands, _pct_b, analyze_bollinger
-from alpha_engine.analyzers.volume import _obv, analyze_volume
 from alpha_engine.analyzers.indian_equity import analyze_indian_equity
 from alpha_engine.analyzers.macd import analyze_macd
 from alpha_engine.analyzers.multi_timeframe import analyze_multi_timeframe
+from alpha_engine.analyzers.rsi import _rsi, analyze_rsi
 from alpha_engine.analyzers.support_resistance import analyze_support_resistance
 from alpha_engine.analyzers.volatility import (
     analyze_volatility,
     classify_regime,
     volatility_scalar,
 )
+from alpha_engine.analyzers.volume import _obv, analyze_volume
 from alpha_engine.analyzers.vwap import analyze_vwap
 from alpha_engine.cache.models import Candle, Interval, PriceSeries
 from alpha_engine.schema.signal import Direction
@@ -135,7 +135,9 @@ def test_bollinger_returns_none_for_insufficient_data():
 
 def test_bollinger_bands_calculation():
     closes = [100.0 + i for i in range(20)]
-    lower, middle, upper = _bollinger_bands(closes, period=20, num_std=2.0)
+    result = _bollinger_bands(closes, period=20, num_std=2.0)
+    assert result is not None
+    lower, middle, upper = result
     assert middle == sum(closes[-20:]) / 20
     assert lower < middle < upper
 
@@ -299,7 +301,7 @@ def test_analyze_indian_equity_is_deterministic():
 
 def _ohlc_series(
     bars: list[tuple[float, float, float, float]],
-    volumes: list[float | None] | None = None,
+    volumes: Sequence[float | None] | None = None,
     asset: str = "BTC",
 ) -> PriceSeries:
     """Series with explicit (open, high, low, close) per bar, so tests can

@@ -27,8 +27,12 @@ def test_latest_records_picks_newest_per_asset(tmp_path):
         direction=Direction.BULLISH,
         confidence=0.6,
         timeframe=Timeframe.SWING,
-        signal_sources=[SignalSource(name="t", direction=Direction.BULLISH, weight=0.6)],
+        signal_sources=[
+            SignalSource(name="t", direction=Direction.BULLISH, weight=0.6, detail="test")
+        ],
         timestamp=base,
+        invalidation_level=None,
+        thesis="test",
     )
     sig_new = sig_old.model_copy(update={"timestamp": base + timedelta(days=1)})
     signals_root = tmp_path / "signals"
@@ -53,13 +57,19 @@ def test_build_dashboard_payload_scores_records(tmp_path):
         direction=Direction.BULLISH,
         confidence=0.75,
         timeframe=Timeframe.SWING,
-        signal_sources=[SignalSource(name="t", direction=Direction.BULLISH, weight=0.6)],
+        signal_sources=[
+            SignalSource(name="t", direction=Direction.BULLISH, weight=0.6, detail="test")
+        ],
         timestamp=base,
+        invalidation_level=None,
+        thesis="test",
     )
     record_signal(signal, entry_price=100.0, root=signals_root)
     cache.put_price(
         _series(
-            "BTC", base + timedelta(days=1), [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111]
+            "BTC",
+            base + timedelta(days=1),
+            [101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111],
         )
     )
 

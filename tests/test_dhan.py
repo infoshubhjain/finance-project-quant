@@ -22,7 +22,6 @@ from alpha_engine.ingestion.dhan import (
 )
 from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
 
-
 # --- payload parsing -----------------------------------------------------------
 
 
@@ -152,7 +151,7 @@ def test_fetch_chain_normalizes_response(monkeypatch):
 
     import alpha_engine.ingestion.dhan as dhan_mod
 
-    monkeypatch.setattr(dhan_mod.requests, "get", fake_get)
+    monkeypatch.setattr(dhan_mod.net, "get", fake_get)
 
     client = DhanLiveClient.from_env()
     chain = client.fetch_chain("NIFTY", "2026-07-30")
@@ -195,7 +194,7 @@ def test_fetch_chain_calls_correct_url(monkeypatch):
 
     import alpha_engine.ingestion.dhan as dhan_mod
 
-    monkeypatch.setattr(dhan_mod.requests, "get", fake_get)
+    monkeypatch.setattr(dhan_mod.net, "get", fake_get)
 
     client = DhanLiveClient.from_env()
     client.fetch_chain("NIFTY", "2026-07-30")
@@ -237,7 +236,7 @@ def test_retry_recovers_after_429(monkeypatch):
 
     import alpha_engine.ingestion.dhan as dhan_mod
 
-    monkeypatch.setattr(dhan_mod.requests, "get", lambda url, **kw: responses.pop(0))
+    monkeypatch.setattr(dhan_mod.net, "get", lambda url, **kw: responses.pop(0))
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 200
@@ -254,7 +253,7 @@ def test_retry_gives_up_after_max_attempts(monkeypatch):
 
     import alpha_engine.ingestion.dhan as dhan_mod
 
-    monkeypatch.setattr(dhan_mod.requests, "get", always_429)
+    monkeypatch.setattr(dhan_mod.net, "get", always_429)
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 429  # last response returned so caller sees the error
@@ -268,7 +267,7 @@ def test_retry_honors_retry_after_header(monkeypatch):
 
     import alpha_engine.ingestion.dhan as dhan_mod
 
-    monkeypatch.setattr(dhan_mod.requests, "get", lambda url, **kw: responses.pop(0))
+    monkeypatch.setattr(dhan_mod.net, "get", lambda url, **kw: responses.pop(0))
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 200
@@ -280,7 +279,7 @@ def test_retry_does_not_retry_client_errors(monkeypatch):
 
     import alpha_engine.ingestion.dhan as dhan_mod
 
-    monkeypatch.setattr(dhan_mod.requests, "get", lambda url, **kw: _StubResponse(401))
+    monkeypatch.setattr(dhan_mod.net, "get", lambda url, **kw: _StubResponse(401))
 
     resp = _get_with_retry("http://x", params={}, headers={})
     assert resp.status_code == 401  # bad credentials should fail fast, not retry

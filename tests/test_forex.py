@@ -72,8 +72,10 @@ def test_zscore_flat_series_is_zero():
 def test_zscore_sign_follows_stretch():
     up = [1.0] * 24 + [1.5]
     down = [1.0] * 24 + [0.5]
-    assert _zscore(up, window=20) > 0
-    assert _zscore(down, window=20) < 0
+    z_up = _zscore(up, window=20)
+    z_down = _zscore(down, window=20)
+    assert z_up is not None and z_up > 0
+    assert z_down is not None and z_down < 0
 
 
 # --- analyzer behavior ---------------------------------------------------------------

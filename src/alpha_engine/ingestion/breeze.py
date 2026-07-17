@@ -15,8 +15,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.models import OptionsChain
 from alpha_engine.ingestion.indian_broker import (
     BrokerCredentials,
@@ -52,19 +51,19 @@ def _checksum(timestamp: str, body: str, api_secret: str) -> str:
     return f"token {digest}"
 
 
-def _post_or_get(url: str, method: str, body: str, headers: dict[str, str]) -> requests.Response:
+def _post_or_get(url: str, method: str, body: str, headers: dict[str, str]) -> net.Response:
     method = method.upper()
     if method == "GET":
-        return requests.get(url=url, data=body, headers=headers, timeout=20)
+        return net.get(url=url, data=body, headers=headers, timeout=20)
     if method == "POST":
-        return requests.post(url=url, data=body, headers=headers, timeout=20)
+        return net.post(url=url, data=body, headers=headers, timeout=20)
     raise ValueError(f"unsupported method: {method}")
 
 
 def _customerdetails(credentials: BrokerCredentials) -> BreezeSession:
     body = _json_body({"SessionToken": credentials.access_token, "AppKey": credentials.api_key})
     headers = {"Content-Type": "application/json"}
-    resp = requests.get(url=f"{_API_URL}customerdetails", data=body, headers=headers, timeout=20)
+    resp = net.get(url=f"{_API_URL}customerdetails", data=body, headers=headers, timeout=20)
     resp.raise_for_status()
     payload = resp.json()
 

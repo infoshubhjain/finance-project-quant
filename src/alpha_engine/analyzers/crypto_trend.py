@@ -35,7 +35,11 @@ def _momentum(values: list[float], lookback: int) -> float | None:
 
 
 def analyze_trend(
-    series: PriceSeries, fast: int = 10, slow: int = 30, mom_lookback: int = 14
+    series: PriceSeries,
+    fast: int = 10,
+    slow: int = 30,
+    mom_lookback: int = 14,
+    name: str = "crypto.trend",
 ) -> SignalSource:
     """Produce one SignalSource from price structure.
 
@@ -43,6 +47,10 @@ def analyze_trend(
     (insufficient data) is neutral. Weight scales with how far apart the SMAs are
     and momentum agreement, capped to [0,1]. This is a transparent, defensible
     starting heuristic, not a claim of alpha.
+
+    The `name` parameter lets callers brand the source (e.g., "equity.trend")
+    without duplicating the logic. When equity analysis diverges (gaps, earnings,
+    volume patterns), re-carve the seam then.
     """
     closes = series.closes()
     fast_ma = _sma(closes, fast)
@@ -51,7 +59,7 @@ def analyze_trend(
 
     if fast_ma is None or slow_ma is None or slow_ma == 0:
         return SignalSource(
-            name="crypto.trend",
+            name=name,
             direction=Direction.NEUTRAL,
             weight=0.0,
             detail="insufficient history",
@@ -79,7 +87,7 @@ def analyze_trend(
     if mom is not None:
         detail += f" mom={mom:.4f}"
 
-    return SignalSource(name="crypto.trend", direction=direction, weight=weight, detail=detail)
+    return SignalSource(name=name, direction=direction, weight=weight, detail=detail)
 
 
 def trend_invalidation(

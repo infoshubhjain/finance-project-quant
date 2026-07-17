@@ -16,8 +16,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import Candle, Interval, PriceSeries
 
@@ -70,7 +69,7 @@ def fetch_daily(asset: str, days: int = 365, cache: Cache | None = None) -> Pric
     asset = asset.upper()
 
     now = int(time.time())
-    resp = requests.get(
+    resp = net.get(
         f"{_BASE}/{asset}",
         params={
             "period1": str(now - days * 86400),

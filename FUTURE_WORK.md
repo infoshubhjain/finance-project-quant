@@ -1,6 +1,6 @@
 # FUTURE_WORK.md — Everything Left To Build
 
-[plan.md](plan.md) took the project from an empty folder to a working, validated,
+The original build plan (Phases 0–6, all shipped) took the project from an empty folder to a working, validated,
 multi-market signal engine (Phases 0–6, all shipped). This file picks up from
 there and covers everything still on the table: the rest of the AI Analyst, the
 whole of AlphaX, and the QuantHQ platform the engine eventually plugs into.
@@ -12,7 +12,7 @@ exception. If a phase here appears to conflict with it, the phase is wrong.
 **How to use this file.** Phases are ordered by leverage, not by excitement. Each
 one is independently shippable and testable. Build top to bottom. The
 "Why this order" section explains why the fun parts are late — the same reason
-the orchestrator was last in plan.md.
+the orchestrator was last in the original plan.
 
 ---
 
@@ -196,7 +196,7 @@ helped, because there is no measurement that would show it.
 So the ranking layer comes first (Phase 7). Once a factor can be scored against
 forward returns, every subsequent addition — new factors, new data domains, new
 analyzers — arrives with a built-in verdict on whether it earned its place. That
-is the same logic that put the validation harness first in plan.md, applied one
+is the same logic that put the validation harness first in the original plan, applied one
 level up.
 
 Order: **measure → wire up what already exists → close the loop → then grow.**
@@ -288,7 +288,7 @@ the engine without a number attached to whether it helped.*
 
 Do **not** use the ranking output to auto-select factors into the live signal
 yet. Ranking on one asset's history, then trading that same history, is
-in-sample overfitting — the exact failure mode plan.md warned about. Ranking is
+in-sample overfitting — the exact failure mode the original plan warned about. Ranking is
 a research tool in this phase. Phase 9 handles feeding it back safely.
 
 ---
@@ -531,7 +531,7 @@ event-driven brain: triggers, priority, and shared context.
 
 Only build this once there are enough data domains for scheduling to be a real
 problem. With one cron job and eleven analyzers, it is a traffic system for a
-town with one car (plan.md's phrasing, still true).
+town with one car (the original plan's phrasing, still true).
 
 **Build.**
 - **Triggers** — scheduled scan, new-data arrival, breaking-news event,
@@ -567,7 +567,7 @@ factors rather than hand-weighting them.
    "held out" after you already ran twenty experiments on it.
 
 If any of the three is missing, this phase makes the track record *worse* while
-making the charts prettier. That is the failure mode plan.md permanently warned
+making the charts prettier. That is the failure mode the original plan permanently warned
 about, and it is not hypothetical — it is the standard outcome.
 
 **Build (when the gate opens).**
@@ -958,7 +958,7 @@ trust — and none of them work without it.
 
 ---
 
-## Cross-cutting rules (unchanged from plan.md, restated because they still bind)
+## Cross-cutting rules (unchanged from the original plan, restated because they still bind)
 
 1. **Determinism in the decision path.** Non-negotiable.
 2. **Keyless default path stays keyless.** New sources are additive and gated.

@@ -25,8 +25,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import requests
-
+from alpha_engine import net
 from alpha_engine.schema.signal import Signal
 
 
@@ -111,7 +110,7 @@ def _call_llm(prompt: str, api_key: str, model: str, api_base: str) -> str | Non
             "temperature": 0.3,
             "max_tokens": 500,
         }
-        resp = requests.post(
+        resp = net.post(
             f"{api_base.rstrip('/')}/chat/completions",
             json=body,
             headers=headers,
