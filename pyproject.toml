@@ -1,7 +1,7 @@
 [project]
 name = "alpha-engine"
-version = "0.1.0"
-description = "An open, deterministic research engine that turns market data into structured, confidence-scored signals. Research and education only, not investment advice."
+version = "0.2.0b1"
+description = "An open, deterministic research engine that turns market data into structured, confidence-scored signals, with joint stock+options backtesting and paper-first execution. Research and education only, not investment advice."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

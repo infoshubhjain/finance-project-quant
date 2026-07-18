@@ -7,6 +7,12 @@ F&O, and forex** — with **zero API keys required** for the default path.
 > **This is a research and education project, not investment advice.** It produces
 > directional *research views*, not buy/sell recommendations. See [Disclaimer](#disclaimer).
 
+> **New to code?** Follow **[GETTING_STARTED.md](GETTING_STARTED.md)** — a
+> step-by-step, no-experience-needed setup guide (installation + how to get every
+> API key). **New in this beta:** joint stock+options backtesting
+> (`backtest --options`) and paper-first trade execution (`trade`, `webhook`).
+> Live trading is OFF by default. See [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## The core design rule
@@ -86,7 +92,9 @@ See [all CLI commands](#cli-commands) below.
 | `scan <ASSET>` | Generate a signal for one asset (auto-detects market) |
 | `scan-all` | Scan all assets configured in `portfolio.json` |
 | `watch <ASSETS...>` | Scan multiple assets, print a compact table |
-| `backtest <ASSET>` | Replay history through the analyzer (no lookahead) |
+| `backtest <ASSET>` | Replay history through the analyzer (no lookahead); `--options` backtests the ATM option too |
+| `trade <ASSET>` | Place one order from a fresh signal — **paper by default** (`--option` for the ATM option) |
+| `webhook` | Run the inbound trade webhook (paper unless `LIVE_TRADING=1`; needs `WEBHOOK_SECRET`) |
 | `report <ASSET>` | Full quant metrics report (regime, scores, vol forecast, indicators, ~50 features) |
 | `record-stats` | Score every recorded signal against outcomes |
 | `scan-chain <FILE>` | Analyze a normalized OptionsChain JSON fixture |

@@ -51,7 +51,10 @@ from alpha_engine.narrative.narrator import write_thesis
 from alpha_engine.quant.report import build_report, render_text
 from alpha_engine.schema.signal import Market, Signal, SignalSource, Timeframe
 from alpha_engine.synthesis.synthesize import synthesize
+from alpha_engine.execution.executor import place_order
+from alpha_engine.execution.orders import signal_to_order
 from alpha_engine.validation.backtest import run_backtest, run_per_analyzer_backtest
+from alpha_engine.validation.options_backtest import run_options_backtest
 from alpha_engine.validation.outcomes import score_record, summarize_outcomes
 from alpha_engine.validation.recorder import read_records, record_signal
 
@@ -392,6 +395,14 @@ def cmd_backtest(args: argparse.Namespace) -> int:
         print(f"[error] fetch failed: {e}", file=sys.stderr)
         return 1
 
+    if getattr(args, "options", False):
+        # Joint underlying + ATM-option backtest. Option leg is Black-Scholes
+        # model-priced (no free tick-level option history exists) — see
+        # validation/options_backtest.py for the honesty boundaries.
+        opt_report = run_options_backtest(series, market=market, step=args.step)
+        print(opt_report.model_dump_json(indent=2))
+        return 0
+
     if getattr(args, "per_analyzer", False):
         reports = run_per_analyzer_backtest(series, market=market, step=args.step)
         print(
@@ -407,6 +418,84 @@ def cmd_backtest(args: argparse.Namespace) -> int:
 
     report = run_backtest(series, market=market, step=args.step, macro_data=macro_data)
     print(report.model_dump_json(indent=2))
+    return 0
+
+
+def cmd_trade(args: argparse.Namespace) -> int:
+    """Scan an asset and place ONE order from the resulting signal.
+
+    Paper by default: nothing reaches a broker unless LIVE_TRADING=1. Non-
+    actionable signals (neutral / low confidence) place no order at all.
+    """
+    cache = Cache()
+    asset = args.asset.upper()
+    market = detect_market(asset, args.market)
+
+    if market is Market.IN_FNO:
+        print(
+            "[error] pass the UNDERLYING (e.g. NIFTY, RELIANCE) with --option, "
+            "not an F&O contract symbol.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        series = _load_series(asset, market, args.days, args.no_refresh, cache)
+    except Exception as e:  # noqa: BLE001 - surface any fetch issue clearly
+        print(f"[error] fetch failed: {e}", file=sys.stderr)
+        return 1
+
+    signal = _build_price_signal(asset, market, series, cache, args.no_refresh)
+    spot = series.candles[-1].close if series.candles else 0.0
+
+    order = signal_to_order(
+        signal,
+        spot=spot,
+        quantity=args.qty,
+        as_option=args.option,
+        strike_step=args.strike_step,
+        expiry=args.expiry,
+        product=args.product,
+    )
+    if order is None:
+        print(
+            f"[trade] signal not actionable ({signal.direction.value}, "
+            f"conf {signal.confidence:.2f}) — no order placed.",
+            file=sys.stderr,
+        )
+        print(signal.model_dump_json(indent=2))
+        return 0
+
+    if args.option and not args.expiry:
+        print(
+            "[trade] WARNING: option order has no --expiry; a live broker will "
+            "reject it. Fine for a paper check.",
+            file=sys.stderr,
+        )
+
+    result = place_order(order, broker=args.broker, est_price=spot)
+    banner = "LIVE ORDER SENT" if result.status == "live" else f"{result.status.upper()}"
+    leg = order.instrument.value
+    if order.instrument.value == "option":
+        leg = f"{order.strike:g} {order.right.value}"  # type: ignore[union-attr]
+    print(
+        f"[trade] {banner}: {order.side.value} {order.quantity} {asset} {leg}  "
+        f"(broker={result.broker})",
+        file=sys.stderr,
+    )
+    print(result.model_dump_json(indent=2))
+    return 0
+
+
+def cmd_webhook(args: argparse.Namespace) -> int:
+    """Run the inbound trade webhook. Paper unless LIVE_TRADING=1."""
+    from alpha_engine.execution.webhook import serve
+
+    try:
+        serve(host=args.host, port=args.port)
+    except RuntimeError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -953,11 +1042,39 @@ def build_parser() -> argparse.ArgumentParser:
     _add_market_args(bt, default_days=365)
     bt.add_argument("--step", type=int, default=1, help="bars between simulated signals")
     bt.add_argument(
+        "--options",
+        action="store_true",
+        help="backtest the ATM option matching each signal (model-priced) alongside the underlying",
+    )
+    bt.add_argument(
         "--per-analyzer",
         action="store_true",
         help="backtest each analyzer in isolation plus the blend, for comparison",
     )
     bt.set_defaults(func=cmd_backtest)
+
+    trade = sub.add_parser("trade", help="scan an asset and place a (paper) order from the signal")
+    _add_market_args(trade, default_days=90)
+    trade.add_argument(
+        "--option", action="store_true", help="trade the ATM option instead of the underlying"
+    )
+    trade.add_argument("--qty", type=int, default=1, help="order quantity (units/lots)")
+    trade.add_argument(
+        "--strike-step", type=float, default=50.0, help="strike grid for ATM rounding (NIFTY=50)"
+    )
+    trade.add_argument("--expiry", default=None, help="option expiry, YYYY-MM-DD")
+    trade.add_argument(
+        "--product", choices=["intraday", "delivery"], default="intraday", help="product type"
+    )
+    trade.add_argument("--broker", choices=["dhan", "angelone"], default="dhan", help="live broker")
+    trade.set_defaults(func=cmd_trade)
+
+    webhook = sub.add_parser(
+        "webhook", help="run the inbound trade webhook (paper unless LIVE_TRADING=1)"
+    )
+    webhook.add_argument("--host", default="127.0.0.1", help="bind address")
+    webhook.add_argument("--port", type=int, default=8787, help="port")
+    webhook.set_defaults(func=cmd_webhook)
 
     report = sub.add_parser(
         "report", help="full quant metrics report (regime, scores, vol forecast, indicators)"

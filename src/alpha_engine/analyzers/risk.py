@@ -46,7 +46,9 @@ class PositionSize(BaseModel):
         ge=0.0,
         description="fraction of risk budget; sums to ~1 across assets after normalization",
     )
-    daily_vol: float = Field(..., description="annualized daily volatility of recent returns")
+    daily_vol: float = Field(
+        ..., description="daily volatility (std of recent daily returns), not annualized"
+    )
     annualized_vol: float = Field(..., description="daily_vol × sqrt(252)")
     note: str = ""
 
