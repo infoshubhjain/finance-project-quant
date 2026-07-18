@@ -46,32 +46,44 @@ git --version
 
 ---
 
-## Part 2 — Download and run it (5 minutes)
+## Part 2 — Download and set it up (5 minutes)
 
-Paste these **one line at a time**. The first downloads the code; the second
-enters the folder:
+First, download the code. Paste these **one line at a time** — the first
+downloads the project, the second moves into its folder:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/alpha-engine.git
-cd alpha-engine
+git clone https://github.com/infoshubhjain/finance-project-quant.git
+cd finance-project-quant
 ```
-> Replace `YOUR_USERNAME/alpha-engine` with the real address of the repository
-> (the owner will give you this, or copy it from the repo's green "Code" button).
 
-Now run the **zero-setup script**. It builds everything and runs your first
-market scan — **no API keys needed**:
+Now run your first scan. **Use the block for your computer** — both do the same
+thing (set everything up, then read the market for Bitcoin), no API keys needed.
+
+**Mac / Linux** — one command does everything:
+```bash
+./start.sh scan BTC
+```
+
+> If you see "permission denied", run `chmod +x start.sh` once, then try again.
+
+**Windows** — install once, then run:
 
 ```bash
-# Mac / Linux:
-./start.sh scan BTC
-
-# Windows:
+python -m pip install -e .
 python -m alpha_engine.cli.main scan BTC
 ```
 
+> You run the `pip install` line **only once, ever**. After that, every command
+> is just the `python -m alpha_engine.cli.main ...` part.
+
 The first run takes a minute (it's installing things). When it finishes you'll
-see a block of JSON — a structured read on Bitcoin: direction, a confidence
+see a block of JSON — a structured read on Bitcoin: a direction, a confidence
 score, and a plain-English `thesis`. **That's the whole engine working.**
+
+> **Windows users — one rule for the rest of this guide:** wherever you see
+> `./start.sh`, type `python -m alpha_engine.cli.main` instead; everything after
+> it stays the same. So `./start.sh scan AAPL` becomes
+> `python -m alpha_engine.cli.main scan AAPL`.
 
 Try a few more (all free, no keys):
 ```bash
