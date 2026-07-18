@@ -35,3 +35,6 @@ data/dhan_instruments.json
 .ruff_cache/
 .coverage
 .DS_Store
+
+# graphify code-graph analysis output (generated; not source)
+graphify-out/

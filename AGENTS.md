@@ -36,10 +36,12 @@ pytest tests/test_core.py::test_name -q
 ./start.sh <cmd>   # zero-setup wrapper: creates venv, installs, runs any CLI command
 ```
 
-Other CLI entry points (also as `alpha-engine <cmd>`): `scan-all`, `backtest <ASSET>`,
-`report <ASSET>`, `record-stats`, `batch --output r.json`, `dashboard`, `watch`,
-`scan-chain`, `fetch-chain`. CI (`.github/workflows/ci.yml`) tests on Python 3.11–3.13;
-coverage is reported but not gated.
+Other CLI entry points (also as `alpha-engine <cmd>`): `scan-all`, `backtest <ASSET>`
+(`--options` adds a model-priced ATM-option leg), `trade <ASSET>` (paper-first,
+`LIVE_TRADING`-gated), `webhook`, `report <ASSET>`, `record-stats`,
+`batch --output r.json`, `dashboard`, `watch`, `scan-chain`, `fetch-chain`. CI
+(`.github/workflows/ci.yml`) tests on Python 3.11–3.13; coverage is reported but
+not gated. 28 test files, all network-free.
 
 ## Architecture
 
