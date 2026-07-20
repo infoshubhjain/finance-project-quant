@@ -143,6 +143,7 @@ class FactorScore:
     coverage: float
     t_stat: float | None  # IC × sqrt(n), crude significance check
     ic_by_horizon: dict[int, float | None]  # IC at 1, 5, 10, 20 bars
+    n_obs: int = 0  # bars where both factor and forward return existed
 
     def __repr__(self) -> str:
         ic_str = f"{self.rank_ic:+.4f}" if self.rank_ic is not None else "None"
@@ -165,6 +166,26 @@ def ic_decay(
         fwd = forward_returns(closes, h)
         decay[h] = rank_ic(factor_values, fwd)
     return decay
+
+
+def noise_floor_ic(n_factors: int, n_obs: int) -> float | None:
+    """The |IC| you should expect the *best* of `n_factors` useless factors to
+    reach, purely by chance, on `n_obs` observations.
+
+    This is the multiple-testing correction the whole ranking layer needs. Score
+    500 factors against 30 observations and something will show |IC| ~ 0.6 even
+    if every factor is random noise — that is arithmetic, not alpha. A top-ranked
+    factor is only interesting if it clears this line.
+
+    The estimate: an IC has standard error ~ 1/sqrt(n), and the maximum of
+    `k` standard normals grows like sqrt(2 ln k). So the floor is
+    sqrt(2 * ln(k)) / sqrt(n). Crude, deliberately so — it is a sanity line, not
+    a p-value, and a precise one would invite exactly the false confidence it
+    exists to prevent.
+    """
+    if n_factors < 2 or n_obs < 3:
+        return None
+    return math.sqrt(2.0 * math.log(n_factors)) / math.sqrt(n_obs)
 
 
 def rank_factors(
@@ -209,6 +230,7 @@ def rank_factors(
                 coverage=cov,
                 t_stat=t_stat,
                 ic_by_horizon=decay,
+                n_obs=valid_pairs,
             )
         )
 

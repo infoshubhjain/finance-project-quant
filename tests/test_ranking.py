@@ -278,3 +278,45 @@ def test_lookahead_pin():
     # First two entries should match exactly
     assert fwd_full[0] == fwd_trunc[0]
     assert fwd_full[1] == fwd_trunc[1]
+
+
+# ---------------------------------------------------------------------------
+# Multiple-testing floor (Phase 10)
+# ---------------------------------------------------------------------------
+
+
+def test_noise_floor_rises_as_more_factors_are_tested():
+    """Testing more factors makes a high |IC| less impressive, not more."""
+    from alpha_engine.quant.ranking import noise_floor_ic
+
+    few = noise_floor_ic(10, 100)
+    many = noise_floor_ic(1000, 100)
+    assert few is not None and many is not None
+    assert many > few
+
+
+def test_noise_floor_falls_as_data_grows():
+    """More observations make the same |IC| harder to reach by chance."""
+    from alpha_engine.quant.ranking import noise_floor_ic
+
+    short = noise_floor_ic(500, 30)
+    long = noise_floor_ic(500, 3000)
+    assert short is not None and long is not None
+    assert long < short
+
+
+def test_noise_floor_undefined_on_degenerate_input():
+    from alpha_engine.quant.ranking import noise_floor_ic
+
+    assert noise_floor_ic(1, 100) is None
+    assert noise_floor_ic(500, 2) is None
+
+
+def test_rank_factors_reports_observation_count():
+    """n_obs is what the noise floor is computed from, so it has to be real."""
+    from alpha_engine.quant.ranking import rank_factors
+
+    series = _series([100.0 + i for i in range(60)])
+    panel = {"ramp": [float(i) for i in range(60)]}
+    scores = rank_factors(series, panel, horizon=5)
+    assert scores[0].n_obs == 55  # 60 bars minus the 5-bar forward window
