@@ -29,7 +29,7 @@ source-health monitoring, and what to do when a scraper goes quiet.
 You do not need to know Python. Copy these three lines into a terminal:
 
 ```bash
-git clone https://github.com/shubhj3/finance-project-quant.git
+git clone https://github.com/infoshubhjain/finance-project-quant.git
 cd finance-project-quant
 ./start.sh
 ```
