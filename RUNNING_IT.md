@@ -260,6 +260,30 @@ worse than having no calendar at all.
 
 ---
 
+## Part 6.5 — Running it from another folder
+
+By default the engine keeps everything it writes in a `data/` folder **relative
+to wherever you run the command from**. Inside the project that is exactly right.
+
+It becomes a problem in two cases:
+
+- You installed it with `pip` and run `alpha-engine` from your home directory.
+  It quietly makes a *second* `data/` folder there, and your signal log is now
+  split across two places.
+- A scheduled job starts somewhere unexpected. From `/` it cannot create the
+  folder at all and fails with `Read-only file system`.
+
+Pin it with one line in `.env`:
+
+```bash
+ALPHA_DATA_DIR=/Users/you/finance-project-quant/data
+```
+
+`scripts/daily.sh` already sets this for itself, so the daily job is safe
+either way. This is only for when you run commands by hand from elsewhere.
+
+---
+
 ## Part 7 — Routine maintenance
 
 Honestly: almost none. But here is the whole list.

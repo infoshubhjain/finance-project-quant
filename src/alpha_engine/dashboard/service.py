@@ -38,7 +38,7 @@ def latest_records(records: list[SignalRecord]) -> list[SignalRecord]:
 
 
 def build_dashboard_payload(
-    records_root: str | Path = "data/signals", cache: Cache | None = None
+    records_root: str | Path | None = None, cache: Cache | None = None
 ) -> dict[str, Any]:
     """Assemble the current dashboard state.
 
@@ -127,7 +127,7 @@ def build_dashboard_payload(
 
 
 def build_asset_history(
-    asset: str, records_root: str | Path = "data/signals", cache: Cache | None = None
+    asset: str, records_root: str | Path | None = None, cache: Cache | None = None
 ) -> dict[str, Any]:
     """Full recorded signal history for one asset, newest first.
 

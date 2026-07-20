@@ -13,6 +13,35 @@ from pathlib import Path
 _DOTENV_FILENAMES = (".env.local", ".env")
 _ENV_LOADED = False
 
+DATA_DIR_ENV = "ALPHA_DATA_DIR"
+
+
+def data_dir() -> Path:
+    """Root directory for everything the engine writes: cache, signal log,
+    trades, calibration, health.
+
+    Default is `data/` relative to the current working directory, which is what
+    this project has always done and what the repo-based flow expects.
+
+    `ALPHA_DATA_DIR` overrides it, and that override is what makes the engine
+    safe to run from anywhere. Two concrete problems it solves:
+
+    - A scheduled job whose working directory is not the project root tries to
+      create `data/` wherever it happens to start. From `/` that is
+      `OSError: [Errno 30] Read-only file system`.
+    - The pip-installed `alpha-engine` command is meant to be runnable from any
+      directory, and without this it scatters a `data/` folder into whichever
+      one you were standing in — so your signal log silently splits across
+      several places and `record-stats` reports on whichever fragment it found.
+
+    `scripts/daily.sh` sets this explicitly, so the scheduled path does not
+    depend on the working directory at all.
+    """
+    override = os.environ.get(DATA_DIR_ENV)
+    if override:
+        return Path(override).expanduser()
+    return Path("data")
+
 
 def _load_env_file(path: Path) -> None:
     """Parse a .env file: one KEY=VALUE per line, `export` prefix allowed.

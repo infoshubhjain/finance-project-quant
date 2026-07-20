@@ -23,7 +23,9 @@ from pydantic import BaseModel, Field
 
 from alpha_engine.schema.signal import Signal
 
-DEFAULT_ROOT = Path("data/signals")
+from alpha_engine.config import data_dir
+
+DEFAULT_ROOT = data_dir() / "signals"
 LOG_NAME = "signals.jsonl"
 
 
@@ -49,11 +51,11 @@ def _digest(signal: Signal, entry_price: float | None) -> str:
 def record_signal(
     signal: Signal,
     entry_price: float | None = None,
-    root: str | Path = DEFAULT_ROOT,
+    root: str | Path | None = None,
 ) -> SignalRecord:
     """Append one signal to the log and return the record written. Append mode
     only: existing lines are never read, touched, or rewritten."""
-    root = Path(root)
+    root = Path(root if root is not None else DEFAULT_ROOT)
     root.mkdir(parents=True, exist_ok=True)
     record = SignalRecord(
         record_id=_digest(signal, entry_price),
@@ -65,8 +67,11 @@ def record_signal(
     return record
 
 
-def read_records(root: str | Path = DEFAULT_ROOT) -> list[SignalRecord]:
+def read_records(root: str | Path | None = None) -> list[SignalRecord]:
     """Load every recorded signal, oldest first. Reading never modifies the log.
+
+    `root=None` resolves through config.data_dir(), so callers do not have to
+    know where the log lives.
 
     Reads line-by-line to avoid loading the entire file into memory at once.
     A line that fails to parse (truncated write, disk-full artifact, hand edit)
@@ -76,7 +81,7 @@ def read_records(root: str | Path = DEFAULT_ROOT) -> list[SignalRecord]:
     """
     import sys
 
-    path = Path(root) / LOG_NAME
+    path = Path(root if root is not None else DEFAULT_ROOT) / LOG_NAME
     if not path.exists():
         return []
     records: list[SignalRecord] = []

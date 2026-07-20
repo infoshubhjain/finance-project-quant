@@ -88,6 +88,15 @@ Two of those were already happening in this repo and had never been noticed.
   monitor that cries wolf is worse than no monitor, so `tests/conftest.py` now
   redirects health writes to a temp file for the whole session.
 
+- **The engine wrote its state relative to the working directory.** Eight
+  modules hardcoded `data/...`, so running `alpha-engine` from anywhere but the
+  project root created a stray `data/` folder there — splitting the signal log
+  so `record-stats` reported on whichever fragment it found — and from `/` it
+  crashed outright with `Read-only file system`. All writable state now resolves
+  through `config.data_dir()`, overridable with `ALPHA_DATA_DIR`. The default is
+  unchanged, so the repo flow behaves exactly as before, and `scripts/daily.sh`
+  sets the override so the scheduled job cannot depend on cwd.
+
 ### Changed
 
 - Version 0.4.0; package metadata filled in (classifiers, URLs, author) and the

@@ -20,6 +20,8 @@ from alpha_engine.cache.interface import Cache
 from alpha_engine.validation.outcomes import OutcomeStatus, score_record
 from alpha_engine.validation.recorder import SignalRecord, read_records
 
+from alpha_engine.config import data_dir
+
 # Shrinkage parameter: controls how quickly an analyzer's hit rate converges
 # to the default 0.50. Higher k means more shrinkage (more conservative).
 # With k=30, an analyzer needs ~30 resolved signals before its empirical
@@ -32,7 +34,7 @@ _DEFAULT_SHRINKAGE_K = 30.0
 _DEFAULT_MIN_SAMPLES = 50
 
 # Where calibration is persisted
-CALIBRATION_PATH = Path("data/calibration.json")
+CALIBRATION_PATH = data_dir() / "calibration.json"
 
 
 class AnalyzerCalibration(BaseModel):

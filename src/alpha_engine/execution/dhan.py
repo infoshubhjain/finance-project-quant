@@ -18,10 +18,10 @@ HONESTY BOUNDARY — read before trusting this with money:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from alpha_engine import net
 from alpha_engine.execution.orders import Instrument, Order, OrderSide
+from alpha_engine.config import data_dir
 from alpha_engine.ingestion.indian_broker import (
     BrokerNotConfiguredError,
     IndianBroker,
@@ -29,7 +29,7 @@ from alpha_engine.ingestion.indian_broker import (
 )
 
 _API_BASE = "https://api.dhan.co/v2"
-_INSTRUMENT_MAP = Path("data/dhan_instruments.json")
+_INSTRUMENT_MAP = data_dir() / "dhan_instruments.json"
 
 
 def _resolve_security_id(order: Order) -> str:

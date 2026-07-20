@@ -18,6 +18,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from alpha_engine.config import data_dir
 from alpha_engine.execution.orders import (
     ExecutionResult,
     Order,
@@ -25,7 +26,7 @@ from alpha_engine.execution.orders import (
     check_caps,
 )
 
-DEFAULT_ROOT = Path("data/trades")
+DEFAULT_ROOT = data_dir() / "trades"
 LOG_NAME = "trades.jsonl"
 
 _TRUTHY = {"1", "true", "yes", "on"}

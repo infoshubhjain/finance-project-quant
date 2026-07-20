@@ -29,6 +29,14 @@ PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR" || exit 1
 
 PYTHON="$PROJECT_DIR/.venv/bin/python"
+
+# Belt and braces with the `cd` above. The engine resolves its writable state
+# relative to the working directory by default, so a job that starts somewhere
+# else would read an empty cache and try to create `data/` wherever it landed —
+# from `/` that is "Read-only file system". Setting this explicitly means the
+# scheduled run does not depend on the working directory at all.
+export ALPHA_DATA_DIR="$PROJECT_DIR/data"
+
 LOG_DIR="$PROJECT_DIR/data/reports"
 LOG="$LOG_DIR/cron.log"
 LOCK_DIR="$PROJECT_DIR/data/.daily.lock"

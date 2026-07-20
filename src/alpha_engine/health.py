@@ -38,7 +38,9 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_PATH = Path("data/health.json")
+from alpha_engine.config import data_dir
+
+DEFAULT_PATH = data_dir() / "health.json"
 
 # How long a source may produce nothing before it is considered degraded.
 # Set from how often the source genuinely has something new to say.

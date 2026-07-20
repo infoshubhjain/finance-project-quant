@@ -24,6 +24,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from alpha_engine.config import data_dir
 from alpha_engine.cache.models import (
     EventItem,
     Fundamentals,
@@ -155,8 +156,10 @@ class LocalStore:
         "events": (EventItem, lambda i: f"{i.region}:{i.name}:{i.ts.isoformat()}"),
     }
 
-    def __init__(self, root: str | Path = "data/cache") -> None:
-        self.root = Path(root)
+    def __init__(self, root: str | Path | None = None) -> None:
+        # None -> resolve through config.data_dir(), which honours ALPHA_DATA_DIR
+        # so the engine is safe to run from any working directory.
+        self.root = Path(root) if root is not None else data_dir() / "cache"
         for sub in ("price", "macro", "chain", *self._COLLECTIONS):
             (self.root / sub).mkdir(parents=True, exist_ok=True)
 

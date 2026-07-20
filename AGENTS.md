@@ -163,5 +163,9 @@ from ~23s to ~70s — that is the symptom.
 - The scheduled job is `scripts/daily.sh` (lock, stale-lock recovery, timeout, rotation,
   health gate). Do not add cron entries that call the CLI directly — an entry without
   `ingest` leaves every context source permanently empty.
+- All writable state resolves through `config.data_dir()`, which honours `ALPHA_DATA_DIR`.
+  Never hardcode `Path("data/...")` in a new module: the default is cwd-relative, so a
+  hardcoded path makes that module write to a different place than the rest of the engine
+  when run from anywhere but the project root.
 - `mcp_server.py` must print **nothing** to stdout except JSON-RPC. Diagnostics go to
   stderr or the protocol stream is corrupted.
