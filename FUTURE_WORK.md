@@ -203,9 +203,55 @@ Order: **measure → wire up what already exists → close the loop → then gro
 
 ---
 
+## Where this stands (updated 2026-07-20, v0.3.0)
+
+That order was followed, and Part A is now finished except for the one phase that
+is gated on time rather than effort.
+
+| Phase | Status | What landed |
+|---|---|---|
+| 7 — Factor ranking | **SHIPPED** | Rank IC, IC decay, hit rate, coverage, plus `noise_floor_ic()` |
+| 8 — Risk agent | **SHIPPED** | `risk` command, VaR/CVaR, concentration, regime gate |
+| 9 — Feedback loop | **SHIPPED** | `calibrate` derives reliability from outcomes with shrinkage |
+| 10 — Factor library | **SHIPPED** | 504 factors, 10 families, registry-wide lookahead pin |
+| 11 — Data breadth | **SHIPPED** | 11a news, 11b on-chain, 11c fundamentals, 11d macro, 11e forex carry |
+| 12 — Orchestrator | **SHIPPED** | Triggers, deterministic priority queue, shared context, freshness ingestion |
+| 13 — ML layer | **GATE CLOSED** | Correctly not started — see below |
+| 14 — MCP server | **SHIPPED** | 5 read-only tools, stdlib only, disclaimer on every payload |
+
+### Why Phase 13 has not been started
+
+Its own gate requires all three of: Phase 7 shipped (yes), **12+ months of
+recorded live signal-vs-outcome data** (no — the log is weeks old), and a
+genuinely untouched holdout period (no).
+
+Two of three is not two-thirds of the way there; it is not started. Building it
+now would fit a model on almost no real out-of-sample data and make the track
+record worse while making the charts prettier. That is the standard outcome, and
+this file said so before there was any temptation to ignore it.
+
+**The gate opens when the signal log has 12+ months of resolved outcomes.**
+Check with `record-stats`. Until then the honest answer is "not yet", and
+recording signals daily via `batch` is the work that opens it.
+
+### What Phase 10 taught that was not in the plan
+
+Ranking 500 factors on short history reports |IC| ≈ 0.9 at the top — and that
+number is almost entirely luck. With `k` factors and `n` observations, the best
+*useless* factor scores about `sqrt(2·ln k)/sqrt(n)`, which on 60 bars and 500
+factors is |IC| ≈ 0.45.
+
+The plan did not anticipate needing a multiple-testing correction, and without
+one the ranking layer would have been a very convincing lie generator. It is now
+computed and printed alongside every ranking. **Treat this as binding on any
+future factor work**: a factor that does not clear the noise floor has told you
+nothing, regardless of how good its t-stat looks.
+
+---
+
 # PART A — Finishing the Engine
 
-## Phase 7 — Factor Ranking: the actual AlphaX core `NEXT`
+## Phase 7 — Factor Ranking: the actual AlphaX core `SHIPPED`
 
 **Goal.** Turn 53 dead numbers into a ranking engine. Given any price series,
 answer the question AlphaX was invented to answer: *which factors actually
@@ -381,7 +427,7 @@ code.
 
 ---
 
-## Phase 10 — Scale the Factor Library (53 → 500+)
+## Phase 10 — Scale the Factor Library (53 → 500+) `SHIPPED (504 factors)`
 
 **Goal.** AlphaX's stated target was 1000–2000 factors. With Phase 7's ranking
 engine in place, factors can now be added *and immediately judged*, so this
@@ -438,7 +484,7 @@ you've saturated a family.
 
 ---
 
-## Phase 11 — Data Breadth: the missing ingestion domains
+## Phase 11 — Data Breadth: the missing ingestion domains `SHIPPED (11a–11e)`
 
 **Goal.** Fill Layer-2 holes from the original blueprint. Each is a self-contained
 adapter following the existing `ingestion/` pattern: fetch → normalize into a
@@ -523,7 +569,7 @@ rather than quietly shipping it as a feature.
 
 ---
 
-## Phase 12 — A Real Orchestrator
+## Phase 12 — A Real Orchestrator `SHIPPED`
 
 **Goal.** The current `orchestrator/` is a for-loop with error handling over
 `portfolio.json`. Honest name: a batch runner. The blueprint's Layer 1 was an
@@ -592,7 +638,7 @@ is "it doesn't."
 
 ---
 
-## Phase 14 — MCP Server: the engine as a tool an AI can call `CHEAP — SHIP ANY TIME`
+## Phase 14 — MCP Server: the engine as a tool an AI can call `SHIPPED`
 
 **Goal.** Expose the engine over **MCP** (Model Context Protocol — the standard by
 which an AI assistant like Claude Code or Cursor discovers and calls external

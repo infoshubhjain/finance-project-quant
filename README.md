@@ -1,396 +1,362 @@
 # Alpha Engine
 
-An open, deterministic research engine that turns market data into structured,
-confidence-scored signals across **crypto, US equities, Indian equities, Indian
-F&O, and forex** — with **zero API keys required** for the default path.
+An open, deterministic research engine for market signals across crypto, US
+equities, Indian equities, Indian F&O, and forex.
 
-> **This is a research and education project, not investment advice.** It produces
-> directional *research views*, not buy/sell recommendations. See [Disclaimer](#disclaimer).
+It reads price history and market data, runs 20+ independent analyzers over it,
+and produces a signal with a direction, a calibrated confidence, a full audit
+trail of every contributing opinion, and the price at which its own reasoning
+would be wrong.
 
-> **New to code?** Follow **[GETTING_STARTED.md](GETTING_STARTED.md)** — a
-> step-by-step, no-experience-needed setup guide (installation + how to get every
-> API key). **New in this beta:** joint stock+options backtesting
-> (`backtest --options`) and paper-first trade execution (`trade`, `webhook`).
-> Live trading is OFF by default. See [CHANGELOG.md](CHANGELOG.md).
+> ## ⚠️ Research only
+>
+> **This is not financial advice.** It is not a recommendation and not a
+> solicitation to trade. The analyzers are honest scaffolding, not proven
+> money-makers — measured against real outcomes they perform at roughly a coin
+> flip, and this project says so rather than hiding it. Anyone acting on this
+> output does so entirely at their own risk.
 
----
+**New here?** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) explains the whole thing in
+plain English before going technical. Start there.
 
-## The core design rule
-
-**Every number is computed by deterministic, tested Python.** A language model may
-write ONLY the `thesis` prose string, and may never set or change a number.
-
-Concretely:
-
-- `direction`, `confidence`, `invalidation_level`, and all source weights are
-  pure functions — same input, same output, always.
-- No analyzer makes a network call. Analyzers read from the `Cache`. Fetching
-  lives in `ingestion/`.
-- No randomness in `analyzers/` or `synthesis/`.
-- The LLM lives only in `narrative/`, is optional, and is gated behind a
-  user-supplied key. With no key, a deterministic template writes the thesis.
-
-This rule is what makes the engine **backtestable**. If a language model set the
-confidence score, you could never replay history and check whether the engine was
-right, because the model might answer differently tomorrow.
+**Running it daily?** [RUNNING_IT.md](RUNNING_IT.md) covers the scheduled job,
+source-health monitoring, and what to do when a scraper goes quiet.
 
 ---
 
-## Pipeline
+## Get it running in one command
+
+You do not need to know Python. Copy these three lines into a terminal:
+
+```bash
+git clone https://github.com/shubhj3/finance-project-quant.git
+cd finance-project-quant
+./start.sh
+```
+
+That is the whole setup. It will:
+
+1. check you have Python 3.10 or newer (and tell you exactly how to install it
+   if you don't),
+2. build an isolated environment inside the project folder — nothing else on
+   your computer is touched,
+3. install what it needs,
+4. generate a few real signals so there is something to look at,
+5. open a dashboard in your browser at **http://localhost:8000**.
+
+Press `Ctrl+C` in the terminal to stop it.
+
+**No API key is needed.** Crypto and US equities work out of the box.
+
+<details>
+<summary><b>Windows users — read this first</b></summary>
+
+`start.sh` is a shell script, so it needs a Unix-style shell. Two easy options:
+
+**Git Bash** (simplest) — install [Git for Windows](https://git-scm.com/download/win),
+then right-click in the project folder and choose "Git Bash Here". Run the
+commands above there.
+
+**WSL** — run `wsl --install` in PowerShell as Administrator, restart, then use
+the Ubuntu terminal.
+
+Either way, make sure you ticked **"Add Python to PATH"** when installing
+Python. It is the single most common cause of setup failure.
+
+If you would rather not use a shell script at all, everything works through
+Python directly:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+pip install -e ".[dev]"
+python -m alpha_engine.cli.main scan BTC
+python -m alpha_engine.cli.main dashboard
+```
+
+</details>
+
+<details>
+<summary><b>Something went wrong</b></summary>
+
+Run the built-in diagnostic:
+
+```bash
+./start.sh doctor
+```
+
+It prints your Python version, whether the engine installed, how many signals
+you have, which optional keys are set, and then tries a real scan to confirm the
+whole path works.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `python3: command not found` | Python missing or not on PATH | Install from python.org; tick "Add to PATH" |
+| `Could not create the virtual environment` | `venv` module missing | `sudo apt install python3-venv` |
+| `Installation failed` | Usually no internet | Check connection, then `pip install -e ".[dev]"` to see the real error |
+| Dashboard is empty | No signals recorded yet | `./start.sh scan BTC` |
+| `HTTP 429` while scanning | Free API rate limit | Wait a few minutes. The cache exists to absorb this — don't retry in a loop |
+| `Permission denied: ./start.sh` | Script not executable | `chmod +x start.sh` |
+
+</details>
+
+---
+
+## Don't want to memorize commands?
+
+```bash
+./start.sh menu
+```
+
+A numbered list — open the dashboard, analyze an asset, run a backtest, see how
+past signals turned out. Pick a number, press enter.
+
+---
+
+## What you can actually do with it
+
+### Look at one asset
+
+```bash
+./start.sh scan BTC          # crypto
+./start.sh scan AAPL         # US stock
+./start.sh scan RELIANCE.NS  # Indian stock
+./start.sh scan NIFTY        # Indian F&O (needs a broker key)
+./start.sh scan EURUSD       # forex (needs OANDA credentials)
+```
+
+You get JSON with the direction, confidence, invalidation level, a plain-English
+thesis, and every analyzer's individual vote and weight. The market is
+auto-detected from the symbol; override with `--market`.
+
+### Get the full quantitative picture
+
+```bash
+./start.sh report BTC
+```
+
+Trend strength, momentum, volatility regime, volume structure, and reads from
+three statistical models (Kalman filter, GARCH, hidden Markov model) — all
+implemented in dependency-free Python.
+
+### Find out which factors actually predict anything
+
+```bash
+./start.sh factors BTC                    # top 40 of 504 factors
+./start.sh factors BTC --clusters         # which factors are the same idea
+./start.sh factors BTC --family momentum  # one family only
+./start.sh factors BTC --top 0 --json     # everything, machine-readable
+```
+
+Each factor is scored by rank IC — how well its value at a point in time
+correlated with what happened next.
+
+**Read the noise floor line at the bottom of the output.** It tells you what the
+luckiest of 500 completely random factors would have scored on your amount of
+data. If the top factor doesn't clear that line, the ranking is consistent with
+every factor being noise, and the engine says so in those words. Testing 500
+things and reporting the winner without that correction is how backtests lie.
+
+### Check whether any of it works
+
+```bash
+./start.sh backtest BTC --days 365   # replay history, no lookahead
+./start.sh record-stats              # score real recorded signals
+./start.sh calibrate                 # re-derive analyzer reliability
+```
+
+`backtest` replays history through the exact same pipeline with a hard
+no-lookahead guarantee. `record-stats` scores the signals you actually generated
+against what the price actually did.
+
+### Run it on a schedule
+
+```bash
+./start.sh scan-all                    # everything in portfolio.json
+./start.sh batch --output report.json  # cron-friendly
+./start.sh ingest                      # refresh news / on-chain / fundamentals
+./start.sh orchestrate --news          # headlines trigger targeted re-scans
+```
+
+`ingest` also scrapes the **FOMC meeting calendar** from federalreserve.gov, so
+the engine automatically lowers confidence in the days before a rate decision
+without you entering anything. Events it cannot scrape — RBI MPC dates, CPI
+releases, earnings — go in `calendar.json` (copy `calendar.example.json`).
+
+`orchestrate --news` is the event-driven path: recent headlines about assets you
+follow become high-priority re-scans of *just those assets*, ahead of the
+routine sweep.
+
+To run it every day, one command sets up the scheduled job:
+
+```bash
+./scripts/install-cron.sh          # 9am daily; --at 18:30 for another time
+```
+
+That installs `scripts/daily.sh`, which refreshes context data, scans the
+portfolio, and then checks whether any data source has gone quiet. It handles
+locking (never two runs at once), stale-lock recovery, a hard timeout, and log
+rotation. See [RUNNING_IT.md](RUNNING_IT.md).
+
+### Knowing when a data source dies
+
+```bash
+./start.sh health     # per-source status
+./start.sh doctor     # that, plus setup, cron state and last run
+```
+
+This matters more than it sounds. Every adapter here degrades to empty rather
+than crashing, so a scraper that broke in March keeps exiting successfully and
+returning nothing — and every signal afterwards is quietly weaker. `health`
+tracks when each source last produced data and flags the ones that have gone
+silent, separating *broken* from *deliberately switched off*:
 
 ```text
-ingestion/  →  cache/  →  analyzers/  →  synthesis/  →  narrative/  →  Signal  →  validation/
-(network)     (disk)     (pure math)    (weighted vote)  (prose only)            (log, score, backtest)
+source                   status detail
+------------------------------------------------------------------------
+news.fed_press           ok     last data 0.1d ago, 240 items total
+news.nse_announcements   WARN   no data for 12.0d (expected within 3d)
+news.rbi_press           FAIL   4 consecutive errors: HTTP 503
+news.sec_edgar           off    SEC_USER_AGENT is not set
 ```
 
-Data flows one way. Each stage may only look left.
+### Use it from an AI assistant
+
+The engine speaks [MCP](https://modelcontextprotocol.io), so Claude Code, Cursor
+or any MCP client can call it directly:
+
+```json
+{
+  "mcpServers": {
+    "alpha-engine": {
+      "command": "/absolute/path/to/finance-project-quant/start.sh",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Five read-only tools: `scan`, `report`, `backtest`, `factors`, `record_stats`.
+
+This fits the architecture unusually well, and not by luck. MCP means the model
+*calls* deterministic tools and *reads* results — it never computes the numbers.
+That is exactly this project's core rule, so an assistant structurally cannot
+invent a figure; it can only ask the engine questions and relay what tested
+Python answered. The research-only disclaimer is attached to every payload, so
+it travels wherever the output gets pasted.
 
 ---
 
-## Markets & capability
+## The rule everything is built around
 
-| Market | Default (zero-key) | With free key | With broker account |
+> **Decision-bearing numbers come only from deterministic, tested Python. The
+> LLM is optional, key-gated, confined to `narrative/`, and may write only the
+> `thesis` prose — never a number.**
+
+If a language model set the confidence score, you could never replay history and
+check whether the engine was right, because the model might answer differently
+tomorrow. Determinism is what makes a track record verifiable, and a track
+record you cannot verify is marketing.
+
+Consequences you can check in the code: no network calls or randomness in
+`analyzers/` or `synthesis/`; the default path never needs an API key; the
+signal log is append-only; the disclaimer is never weakened.
+
+---
+
+## Capability matrix
+
+| Market | Data source | Key needed? | Analyzers |
 |---|---|---|---|
-| Crypto | CoinGecko + Binance fallback | CoinGecko Pro (raise rate limits) | — |
-| US equities | Yahoo Finance | FRED macro context added | — |
-| Indian equities | Yahoo via `.NS` / `.BO` | — | — |
-| Indian F&O | Analytics on cached/fixture chains | — | Breeze / Angel One / Dhan |
-| Forex | — | — | OANDA (free practice account) |
-| US macro | — | FRED (free key, fred.stlouisfed.org) | — |
+| Crypto | CoinGecko → Binance fallback | No | trend, momentum, volume, on-chain positioning |
+| US equity | Yahoo Finance | No | trend, momentum, volume, macro, fundamentals\* |
+| Indian equity | Yahoo Finance, NSE disclosures | No | Indian trend, RBI-aware macro, FII/DII flows |
+| Indian F&O | Breeze / Angel One | Yes | PCR, max pain, OI walls, OI shift |
+| Forex | OANDA | Yes | trend, carry, dollar cycle, INR band |
 
-The LLM narrator is optional. With no model key, a deterministic template writes
-the thesis. A configured model only upgrades the phrasing.
+<sub>\* fundamentals need a free FMP key</sub>
 
----
+### Data sources (17 adapters)
 
-## Quickstart
+**Keyless:** CoinGecko, Binance spot, Binance futures (funding + open interest),
+Yahoo Finance, World Bank, SEC EDGAR, Fed press, RBI press, NSE announcements,
+NSE FII/DII flows, RBI policy rates, FOMC meeting calendar.
 
-```bash
-git clone <repo-url> alpha-engine
-cd alpha-engine
-pip install -e ".[dev]"
+**Key-gated** (all free tiers, all degrade gracefully): FRED, Finnhub news, FMP
+fundamentals, Glassnode on-chain, CoinGecko Pro, OANDA, Breeze, Angel One, Dhan.
 
-# No API key needed — crypto and US equities both work keyless.
-python -m alpha_engine.cli.main scan BTC
-python -m alpha_engine.cli.main scan AAPL
+A missing key never breaks a scan — the affected analyzer abstains with weight
+zero and says so in its detail string.
 
-# Run the tests to confirm everything behaves:
-pytest -q
+**On the scraped sources** (NSE, RBI): scraping is a contract nobody signed, and
+those sites can change a field name any Tuesday. Those adapters validate the
+shape of what they receive and print a loud `CONTRACT BROKEN` warning while
+returning nothing, rather than a plausible-looking wrong number. Empty output
+from a scraper always means "could not read it", never "there was nothing there".
 
-# Or use the zero-setup wrapper:
-./start.sh scan BTC
-```
+### Factor library — 504 factors
 
-See [all CLI commands](#cli-commands) below.
-
----
-
-## CLI commands
-
-| Command | Description |
-|---|---|
-| `scan <ASSET>` | Generate a signal for one asset (auto-detects market) |
-| `scan-all` | Scan all assets configured in `portfolio.json` |
-| `watch <ASSETS...>` | Scan multiple assets, print a compact table |
-| `backtest <ASSET>` | Replay history through the analyzer (no lookahead); `--options` backtests the ATM option too |
-| `trade <ASSET>` | Place one order from a fresh signal — **paper by default** (`--option` for the ATM option) |
-| `webhook` | Run the inbound trade webhook (paper unless `LIVE_TRADING=1`; needs `WEBHOOK_SECRET`) |
-| `report <ASSET>` | Full quant metrics report (regime, scores, vol forecast, indicators, ~50 features) |
-| `record-stats` | Score every recorded signal against outcomes |
-| `scan-chain <FILE>` | Analyze a normalized OptionsChain JSON fixture |
-| `fetch-chain <ASSET>` | Fetch a live Indian F&O chain from broker and analyze it |
-| `batch` | Scheduled batch scan with JSON report output (cron-friendly) |
-| `dashboard` | Launch read-only web UI |
-
-Common flags:
-
-| Flag | Applies to | Description |
+| Family | Count | Examples |
 |---|---|---|
-| `--market crypto\|us_equity\|in_equity\|in_fno\|forex` | scan, backtest, report, watch | Force market instead of auto-detecting |
-| `--days N` | scan, backtest, report, watch | History window to fetch (default varies) |
-| `--no-refresh` | scan, backtest, report, watch | Use cache even if stale |
-| `--no-record` | scan, scan-chain, fetch-chain, scan-all, batch | Don't append to the signal log |
-| `--llm` | scan, watch, scan-all, batch | Use optional LLM to rephrase thesis (needs `LLM_API_KEY`) |
-| `--json` | report | Emit full report as JSON |
-| `--per-analyzer` | backtest | Backtest each analyzer in isolation plus the blend |
-| `--step N` | backtest | Bars between simulated signals (default 1) |
-| `--sort confidence\|asset\|market` | watch | Sort the batch output |
-| `--broker breeze\|angelone\|dhan` | fetch-chain | Broker to fetch from (default breeze) |
-| `--expiry YYYY-MM-DD` | fetch-chain | Expiry date (required) |
-| `--config <PATH>` | scan-all, batch | Path to portfolio.json |
-| `--output <PATH>` | batch | Write JSON report to disk |
-| `--host`, `--port` | dashboard | Bind address (default 127.0.0.1:8000) |
+| `ma_structure` | 111 | SMA/EMA/WMA distance, slope, crossover spreads |
+| `distribution` | 78 | skew, kurtosis, autocorrelation, variance ratios, Hurst |
+| `volatility` | 73 | realized, Parkinson, Garman-Klass, Yang-Zhang, EWMA |
+| `trend_quality` | 52 | regression slope/R²/t-stat, ADX, efficiency ratio |
+| `momentum` | 49 | raw, vol-normalized, skip-a-bar, acceleration, rank |
+| `range_structure` | 48 | distance to highs/lows, Donchian, Bollinger, gaps |
+| `volume` | 45 | OBV slope, Amihud illiquidity, VWAP distance, CMF |
+| `risk_adjusted` | 17 | Sharpe, Sortino, Calmar, Ulcer index, drawdown |
+| `oscillator` | 16 | RSI, stochastics, CCI, Williams %R, money flow |
+| `model` | 15 | Kalman distance, GARCH forecast, HMM regime |
 
-### Market auto-detection
-
-| Pattern | Detected as |
-|---|---|
-| `BTC`, `ETH`, `SOL` (known crypto) | crypto |
-| `NIFTY`, `BANKNIFTY`, `FINNIFTY`, `MIDCPNIFTY`, `SENSEX` | in_fno |
-| `RELIANCE.NS`, `TCS.BO` (`.NS` / `.BO` suffix) | in_equity |
-| `EURUSD`, `GBPUSD` (currency pairs) | forex |
-| Everything else (`AAPL`, `MSFT`, `GOOGL`) | us_equity |
-
-Override with `--market`.
+Every factor is pinned against lookahead by a test that runs over the whole
+registry: its value at bar `t` must be identical whether computed on the full
+series or on a series truncated at `t`. Adding a factor is one dictionary entry
+and nothing else — it then appears in `factors` output, gets IC-scored, and is
+covered by that test automatically.
 
 ---
 
-## Ingestion adapters (10 sources)
+## Optional API keys
 
-| Adapter | Source | Market | Key needed? |
-|---|---|---|---|
-| `coingecko.py` | CoinGecko keyless API | Crypto | No |
-| `coingecko_pro.py` | CoinGecko Pro | Crypto | Free tier key |
-| `binance.py` | Binance public API | Crypto | No (fallback) |
-| `yahoo.py` | Yahoo Finance chart endpoint | US equities, Indian equities | No |
-| `fred.py` | FRED (St. Louis Fed) | US macro | Free key |
-| `oanda.py` | OANDA | Forex | Free practice account |
-| `breeze.py` | Breeze (Indian broker) | Indian F&O | Broker credentials |
-| `angelone.py` | Angel One SmartAPI | Indian F&O | Broker credentials |
-| `dhan.py` | Dhan | Indian F&O | Broker credentials |
-| `indian_fno.py` | Normalized JSON fixture loader | Indian F&O | No |
+Everything above works without any of these. Copy `.env.example` to `.env` and
+fill in only what you want.
 
-Fallback chains: crypto tries CoinGecko Pro → keyless CoinGecko → Binance, so a
-rate-limit error never kills a scan.
-
----
-
-## Analyzers (17 pure-function specialists)
-
-| Analyzer | What it reads | What it outputs |
+| Variable | Unlocks | Free key |
 |---|---|---|
-| `crypto_trend` | Price series | Dual-MA trend + momentum for crypto |
-| `equity_trend` | Price series | Dual-MA trend + momentum for US equities |
-| `indian_equity` | Price series | Dual-MA trend for Indian equities |
-| `forex_trend` | Price series | Dual-MA trend + z-score for forex |
-| `rsi` | Price series | Relative Strength Index (0–100 overbought/oversold) |
-| `macd` | Price series | MACD crossover momentum |
-| `bollinger` | Price series | Bollinger Band position (±2σ) |
-| `volume` | Price series | On-balance volume confirmation |
-| `vwap` | Price series | Volume-weighted average price distance |
-| `support_resistance` | Price series | Swing high/low cluster detection |
-| `multi_timeframe` | Price series | Short/medium/long horizon agreement |
-| `volatility` | Price series | ATR regime (always votes NEUTRAL; extreme tape scales other weights ×0.6) |
-| `macro_context` | FRED macro observations | Tightening/easing posture (cap at weight 0.35) |
-| `fno_oi` | Options chain | PCR, max pain, OI shifts, put/call walls |
-| `correlation` | Multiple price series | Pairwise return correlation matrix (used by portfolio view) |
-| `portfolio_signal` | Multiple signals + price series | Net bias, conviction weights, diversification score |
+| `FRED_API_KEY` | US macro (rates, CPI, unemployment) | https://fred.stlouisfed.org |
+| `FINNHUB_API_KEY` | Company-tagged news | https://finnhub.io |
+| `FMP_API_KEY` | Company fundamentals | https://financialmodelingprep.com |
+| `GLASSNODE_API_KEY` | Crypto on-chain flows | https://glassnode.com |
+| `SEC_USER_AGENT` | SEC EDGAR filings | **no signup** — just your name + email |
+| `LLM_API_KEY` | AI-written thesis prose (never a number) | any provider |
+| `OANDA_API_KEY` | Forex price data | https://oanda.com |
+| `BREEZE_API_KEY` / `ANGEL_ONE_API_KEY` | Indian F&O chains | broker account |
+| `DHAN_ACCESS_TOKEN` | Order placement (paper by default) | broker account |
 
 ---
 
-## Quant features & models
-
-The `report` command produces a scored quant metrics summary from:
-
-### ~53 deterministic features
-
-| Category | Examples |
-|---|---|
-| Returns | 1/5/10/20-day return, log returns |
-| Trend | SMA/EMA crossovers, trend strength, regression slope & R² |
-| Volatility | Realized vol, ATR, vol ratios, Garman-Klass, Parkinson |
-| Volume | OBV, volume z-score, VWAP distance, Amihud illiquidity |
-| Momentum | RSI, MACD, rate of change, efficiency ratio |
-| Range | Distance to N-bar high/low, position within range, candle-body ratios |
-| Statistical | Rolling skew, kurtosis, Hurst exponent, autocorrelation, variance ratio |
-| Candle shape | Body-to-range ratio, gap statistics, consecutive up/down bars |
-
-### Statistical models (dependency-free pure Python)
-
-| Model | What it does |
-|---|---|
-| **Kalman filter** | Local-level filter treating price = hidden fair value + noise. Reports fair value, distance (%), and slope. |
-| **GARCH(1,1)** | Volatility forecast. Fit by exhaustive grid search (no stochastic optimizer, stays deterministic). Reports next-bar and annualized vol forecasts. |
-| **2-state HMM** | Infers bull/bear regime from return pattern, with fixed deterministic initialization. Reports regime probability and state sequence. |
-| **ADX** | Average Directional Index — measures whether a trend exists (above ~25 = trend, regardless of direction). |
-| **Volume profile** | Point of control (busiest price level) and top-3 volume nodes — support/resistance from participation data. |
-
-Indicators also include Keltner channels, envelope bands, and a blended trend/momentum/volume conviction score.
-
----
-
-## Synthesis & confidence calibration
-
-`synthesis/synthesize.py` folds all analyzer `SignalSource`s into one `Signal`:
-
-1. **Net direction** — weighted vote: bullish sources add weight, bearish subtract.
-   A deadband (±0.1) keeps tiny nets neutral.
-
-2. **Confidence** — calibrated from three components:
-   - **Agreement quality**: what fraction of total weight agrees with the final
-     direction
-   - **Source reliability**: each analyzer's historical accuracy (set from
-     backtest data, currently ~0.50 for scaffold analyzers)
-   - **Source diversity**: a source-count cap prevents few sources from reaching
-     high confidence (1 source max 0.45, 5+ sources max 0.78, never 1.0)
-
-3. **Invalidation level** — the price at which the view is wrong, derived from
-   recent swing structure and keyed to the synthesized direction. This is the
-   schema's most important honesty mechanism.
-
----
-
-## Validation
-
-### Signal recording
-
-Every `scan` appends one line to `data/signals/signals.jsonl` with the signal
-and the entry price at that moment. **Append-only**: the code has no path that
-can rewrite an old line. Signals are recorded before anyone knows the outcome.
-
-### Outcome scoring
-
-`record-stats` scores recorded signals against what actually happened:
-
-- A swing signal gets 10 trading days for its direction to play out
-- If price touches the invalidation level first, it's an immediate miss
-- Neutral signals are not scored (they make no claim)
-- Produces a calibration curve showing whether confidence levels match hit rates
-
-### Backtesting
-
-`backtest <ASSET>` replays history through the same analyzers with a structural
-**no-lookahead guarantee**:
-
-- `signal_at(series, t)` is the only way to generate a historical signal
-- It truncates the series to bars `[0..t]` before any analysis
-- A unit test pins byte-identical output whether or not the future exists
-- Macro observations dated after bar `t` are also invisible
-
-The honest baseline finding: **roughly a coin flip on BTC** with the current
-scaffold analyzers. That measured baseline is what every improvement gets judged
-against.
-
----
-
-## Orchestrator & portfolio
-
-### Batch scanning
-
-The orchestrator runs scans across multiple assets sequentially (to respect API
-rate limits), with **fault isolation** — one asset failing never blocks another.
-
-```bash
-python -m alpha_engine.cli.main scan-all          # all in portfolio.json
-python -m alpha_engine.cli.main batch --output r.json  # cron-friendly
-```
-
-Configure assets in `portfolio.json` at the project root.
-
-### Portfolio view
-
-The dashboard and `scan-all` output include a portfolio-level aggregation
-(computed by `analyzers/portfolio_signal.py`):
-
-- **Net bias**: confidence-weighted average of all directional signals (-1 to +1)
-- **Conviction weights**: each asset's share of total directional confidence
-- **Diversification score**: 1 minus average pairwise return correlation
-- **Concentration flags**: warnings when views cluster (all one direction,
-  same-direction assets highly correlated)
-- **Correlation matrix**: pairwise return correlations for all directional assets
-
----
-
-## Dashboard
-
-The read-only dashboard serves from the stdlib HTTP server — no build step,
-no auth, no writes, no trading actions.
-
-```bash
-python -m alpha_engine.cli.main dashboard       # via CLI
-python -m web.server                            # directly
-python -m web.server --host 0.0.0.0 --port 8000
-```
-
-| Route | Description |
-|---|---|
-| `/` | Dashboard HTML |
-| `/api/dashboard` | Aggregate payload (latest signals, outcomes, portfolio view) |
-| `/api/asset/<SYMBOL>` | Full recorded history for one asset |
-
-The frontend is vanilla JS + inline SVG in `web/static/`. No build step, no npm.
-
----
-
-## Project structure
+## Project layout
 
 ```text
 src/alpha_engine/
-  schema/signal.py          Signal, SignalSource, Direction, Market enums. The contract.
-  cache/models.py           Normalized data shapes: Candle, PriceSeries, OptionsChain, MacroObservation
-  cache/interface.py        Cache (public read API) + LocalStore + TTL/staleness
-  ingestion/                Source adapters: coingecko, yahoo, fred, oanda, breeze, angelone, dhan, binance, coingecko_pro, indian_fno, indian_broker
-  quant/features.py         ~53 deterministic features (returns, trend, vol, volume, stats)
-  quant/models.py           Kalman filter, GARCH(1,1), 2-state HMM — dependency-free pure Python
-  quant/report.py           Scored quant report + ADX, Keltner, volume profile, verdict
-  analyzers/                Pure-function specialists: trend, rsi, macd, bollinger, volume, vwap, support_resistance, multi_timeframe, volatility, macro_context, fno_oi, correlation, portfolio_signal, indian_equity, forex_trend, crypto_trend, equity_trend
-  synthesis/synthesize.py   Weighted-vote synthesis with confidence calibration
-  narrative/narrator.py     Templated thesis; optional LLM hook
-  narrative/llm.py          LLM rephrasing with re-validation guard
-  validation/recorder.py    Append-only JSONL signal log (data/signals/)
-  validation/outcomes.py    Outcome scoring: hit/miss/miss_immediately, calibration curve
-  validation/backtest.py    No-lookahead replay; signal_at is the truncation choke point
-  dashboard/service.py      Dashboard data assembly with thread-safe snapshot
-  orchestrator/             Multi-asset batch scanning with fault isolation
-  cli/main.py               All CLI commands: scan, scan-all, watch, backtest, report, record-stats, scan-chain, fetch-chain, batch, dashboard
-  config.py                 .env file loader (stdlib, no dependency)
-web/
-  server.py                 Read-only dashboard HTTP server (stdlib ThreadingHTTPServer)
-  static/index.html         Dashboard HTML
-  static/app.js             Dashboard JS
-  static/style.css          Dashboard CSS
-tests/                      23 test files, all network-free, covering every layer
-docs/
-  architecture.md           Pipeline deep dive
-  analyzer-guide.md         How to write and add analyzers
-  deployment.md             Docker and deployment guide
-```
-
----
-
-## Environment variables
-
-All optional. The default path needs none — see `.env.example` for the full list.
-
-| Variable | Purpose |
-|---|---|
-| `FRED_API_KEY` | US macro context (free, fred.stlouisfed.org) |
-| `LLM_API_KEY` | Optional LLM narrator (works with any OpenAI-compatible API) |
-| `LLM_MODEL` | Model name (default: `gpt-4o-mini`) |
-| `LLM_API_BASE` | API base URL (default: `https://api.openai.com/v1`) |
-| `COINGECKO_API_KEY` | Raise crypto rate limits (free tier) |
-| `BREEZE_API_*` | Indian F&O chain via Breeze |
-| `ANGEL_ONE_*` | Indian F&O chain via Angel One SmartAPI |
-| `DHAN_*` | Indian F&O chain via Dhan |
-| `OANDA_API_KEY` | Forex candles (free practice account) |
-
-The app searches for `.env` / `.env.local` in the current directory, the project
-root, and parent directories. Existing shell variables always take priority.
-
----
-
-## Deployment
-
-### Docker
-
-```bash
-docker compose up          # runs scan-all + dashboard
-docker compose run engine python -m alpha_engine.cli.main scan BTC
-```
-
-See `Dockerfile` (slim Python 3.12 image) and `docker-compose.yml` (engine
-service + dashboard service).
-
-The Docker setup creates required `data/` directories at startup, and the engine
-container runs a default scan-all on each start.
-
-### Zero-setup script
-
-```bash
-./start.sh                   # creates venv + launches dashboard
-./start.sh scan BTC          # creates venv + scans
-./start.sh backtest BTC      # creates venv + backtests
-./start.sh batch             # creates venv + batch scan
+  schema/signal.py      the contract every layer compiles against
+  ingestion/            network adapters (the only layer that touches the net)
+  cache/                normalized models + local store with TTLs
+  analyzers/            pure functions: data in, SignalSource out
+  synthesis/            weighted vote + confidence calibration
+  narrative/            the LLM lives here, and only here
+  quant/                features, 504-factor registry, ranking, models, reports
+  validation/           append-only log, outcome scoring, backtests, calibration
+  orchestrator/         batch runner + event-driven trigger engine
+  execution/            order placement (paper-first, live is gated)
+  cli/main.py           every command
+  health.py             source health tracking (makes silent decay visible)
+web/                    read-only dashboard (outside the package, no build step)
+mcp_server.py           MCP server for AI assistants (stdlib only)
+scripts/daily.sh        the scheduled job: lock, timeout, rotation, health check
+scripts/install-cron.sh one-command cron setup
+tests/                  ~2200 tests, all network-free
 ```
 
 ---
@@ -398,92 +364,59 @@ container runs a default scan-all on each start.
 ## Development
 
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
+source .venv/bin/activate
 pip install -e ".[dev]"
-pytest -q         # all tests must pass (network-free)
-ruff check .      # lint must be clean
 
-# Manual end-to-end check:
-python -m alpha_engine.cli.main scan BTC
+pytest -q                                # ~2200 tests, ~20s, no network
+ruff check . && ruff format --check .    # CI gates both
+python -m alpha_engine.cli.main scan BTC # manual end-to-end
 ```
 
-### Test suite (23 files, all network-free)
+A change is done when all three pass. CI runs on Python 3.11–3.13.
 
-| Test file | What it covers |
-|---|---|
-| `test_core.py` | Determinism, schema validation, core pipeline |
-| `test_quant.py` | Features, Kalman, GARCH, HMM, report determinism |
-| `test_validation.py` | Recorder immutability, outcome scoring, no-lookahead pin |
-| `test_analyzers.py` | Individual analyzer behavior on fixed inputs |
-| `test_markets.py` | Yahoo/FRED parsing, equity + macro analyzers, blending |
-| `test_fno.py` | Options chain PCR, max pain, OI shift |
-| `test_cache.py` | Cache TTL, staleness, put/get round-trip |
-| `test_cli.py` | Argument parsing, market detection, error paths |
-| `test_backtest_extended.py` | Per-analyzer backtest, edge cases |
-| `test_orchestrator.py` | Config loading, batch scanning, fault isolation |
-| `test_portfolio.py` | Portfolio view, correlation, diversification |
-| `test_dashboard.py` | Dashboard payload assembly |
-| `test_dashboard_extended.py` | Dashboard edge cases, thread safety |
-| `test_web.py` | HTTP server routing, static file serving |
-| `test_ingestion_adapters.py` | Ingestion adapter parsing logic |
-| `test_forex.py` | Forex trend analyzer |
-| `test_config.py` | .env file loading |
-| `test_narrator.py` | Thesis generation, LLM re-validation guard |
-| `test_fixtures.py` | Fixture data loading |
-| `test_indian_broker.py` | Broker error handling |
-| `test_angelone.py` | Angel One adapter |
-| `test_dhan.py` | Dhan adapter |
-
-### CI
-
-GitHub Actions runs tests on Python 3.11, 3.12, and 3.13, plus lint checks.
+Architecture rules and extension patterns: [AGENTS.md](AGENTS.md) and
+[context.md](context.md). Contributing guidelines:
+[CONTRIBUTING.md](CONTRIBUTING.md). Roadmap: [FUTURE_WORK.md](FUTURE_WORK.md).
+Step-by-step setup with screenshots-level detail:
+[GETTING_STARTED.md](GETTING_STARTED.md).
 
 ---
 
-## Future work
+## Status: what's built and what isn't
 
-The highest-leverage next phase is **Factor Ranking** (Phase 7 in
-[FUTURE_WORK.md](FUTURE_WORK.md)): turn the ~53 features into a ranked table of
-which factors actually predict forward returns, measured by Spearman IC and hit
-rate. This establishes the scoring system every future addition gets judged
-against.
+**Built and tested:** the full pipeline, 20+ analyzers, 504 ranked factors, 17
+data adapters, no-lookahead backtesting, outcome scoring, reliability
+calibration, portfolio risk reporting, the event-driven orchestrator, the web
+dashboard, the MCP server, and paper-first order execution.
 
-Other planned work: wire up the existing but unimported correlation/portfolio
-analyzers, add news/sentiment ingestion, crypto on-chain data, fundamentals,
-macro breadth, an MCP server for AI assistant integration, and the full
-validation feedback loop (offline, human-invoked calibration).
+**Deliberately not built:**
 
-See [FUTURE_WORK.md](FUTURE_WORK.md) for the full phased roadmap. (The original
-build plan it grew from — Phases 0–6 — is fulfilled and has been retired.)
+- **The ML layer.** Gated on 12+ months of recorded live outcomes and a
+  genuinely untouched holdout period. Building it before then produces prettier
+  charts and a worse track record — that is the standard outcome, not a
+  hypothetical.
+- **DCF and comparables valuation.** Both need assumptions you invent. A number
+  you picked does not stop being invented because it is in a spreadsheet.
+- **QuantHQ**, the multi-user platform. A different codebase: users, sessions, a
+  database, auth. See [FUTURE_WORK.md](FUTURE_WORK.md).
 
----
-
-## Status & honesty notes
-
-- **Analyzers are scaffolds, not alpha.** They are transparent heuristics meant
-  to exercise the pipeline. The backtester proves it: roughly coin-flip hit rate
-  on BTC. That baseline is what improvement gets measured against.
-- **Confidence calibration is improved** but still heuristic. The synthesis layer
-  factors in source reliability and agreement quality. Fixing confidence against
-  recorded outcomes is ongoing work.
-- **Free data sources rate-limit.** The cache exists so you read local data
-  instead of hammering APIs. If you see a 429, wait and retry. Tests are
-  network-free.
+**The honest performance note:** the analyzers are scaffolding with no
+demonstrated edge. On BTC backtests they land near a coin flip. The measurement
+machinery — backtests, outcome scoring, IC ranking, the noise floor — is the
+actual deliverable, and it works. What it currently measures is that this does
+not beat the market. That result is reported rather than buried, and any future
+change gets judged against it.
 
 ---
 
-## Contributing
+## License
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). The rule that matters: analyzers and
-synthesis stay deterministic and tested. If your change makes a number depend on
-an LLM or on randomness, it belongs somewhere else.
-
----
+MIT — see [LICENSE](LICENSE).
 
 ## Disclaimer
 
-This software is provided for research and educational purposes only. It does not
-constitute financial, investment, or trading advice, and its authors are not
-registered investment advisers in any jurisdiction. Markets involve risk of loss.
-Do your own research and consult a licensed professional before making any
-financial decision. See [LICENSE](LICENSE) for warranty terms.
+Research and educational software. **Not financial advice.** The authors are not
+registered investment advisers in any jurisdiction. No warranty of accuracy,
+fitness, or profitability. Markets carry real risk of loss. Do your own research
+and consult a licensed professional before making any financial decision. See
+[LICENSE](LICENSE) for warranty terms.

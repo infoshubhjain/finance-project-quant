@@ -1,0 +1,26 @@
+[
+  {
+    "_comment": "OPTIONAL. Copy to calendar.json only if you want events beyond the FOMC.",
+    "_comment2": "FOMC dates are scraped automatically from federalreserve.gov by `ingest --kind events` — you do NOT need to list them here.",
+    "_comment3": "This file is for what cannot be scraped: RBI MPC dates (the RBI's page serves no dates in its HTML), CPI releases, earnings dates.",
+    "_comment4": "Replace the EXAMPLE entries with real dates from rbi.org.in / bls.gov. The engine ships none of its own: a wrong date dampens confidence on the wrong day, which is worse than no calendar at all.",
+    "_comment5": "region: us | in | global.  importance: high | medium | low.",
+    "ts": "2026-02-06T05:30:00Z",
+    "name": "EXAMPLE - replace me - RBI MPC decision",
+    "region": "in",
+    "importance": "high"
+  },
+  {
+    "ts": "2026-02-12T13:30:00Z",
+    "name": "EXAMPLE - replace me - US CPI release",
+    "region": "us",
+    "importance": "medium"
+  },
+  {
+    "ts": "2026-04-30T20:30:00Z",
+    "name": "EXAMPLE - replace me - AAPL earnings",
+    "region": "us",
+    "importance": "high",
+    "asset_tags": ["AAPL"]
+  }
+]

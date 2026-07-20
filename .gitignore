@@ -42,3 +42,12 @@ data/dhan_instruments.json
 graphify-out/cache/
 graphify-out/.graphify_*
 graphify-out/cost.json
+
+# Derived from the (ignored) signal log by `calibrate`; user-specific
+data/calibration.json
+
+# Per-machine source-health diagnostics, rebuilt by `ingest`. Safe to delete.
+data/health.json
+
+# Lock directory held by scripts/daily.sh while a run is in flight
+data/.daily.lock/

@@ -56,6 +56,32 @@ git clone https://github.com/infoshubhjain/finance-project-quant.git
 cd finance-project-quant
 ```
 
+### The fastest possible start
+
+On Mac or Linux, one command sets everything up, generates a few real signals,
+and opens a dashboard in your browser:
+
+```bash
+./start.sh
+```
+
+That is genuinely all of it. If anything goes wrong, run `./start.sh doctor` —
+it checks your Python version, whether the install worked, and tries a real scan
+to tell you exactly what is broken.
+
+And if you would rather not remember any commands at all:
+
+```bash
+./start.sh menu
+```
+
+gives you a numbered list to pick from.
+
+The rest of this guide uses individual commands, so you can see what each piece
+does.
+
+### Your first scan
+
 Now run your first scan. **Use the block for your computer** — both do the same
 thing (set everything up, then read the market for Bitcoin), no API keys needed.
 
@@ -268,13 +294,58 @@ To go back to safety, just close the terminal or run `unset LIVE_TRADING`
 | A scan fails with "429" | You hit a free data limit. Wait a minute and retry; the engine caches to avoid this. |
 | `.env` changes seem ignored | Make sure the file is named exactly `.env` (not `.env.txt`) and is in the project folder. |
 | Live order rejected: "no securityId" | You need `data/dhan_instruments.json` (Part 6, lock 3). |
-| Anything else | Run `./start.sh scan BTC` — if that works, the install is fine and the problem is specific to the failing command's data source or key. |
+| The dashboard is blank | No signals recorded yet. Run `./start.sh scan BTC`, then reload. |
+| Anything else | Run `./start.sh doctor` — it diagnoses the whole setup and tries a real scan. |
+
+---
+
+## Part 7 — The rest of what it can do
+
+Once the basics work, these are worth knowing about:
+
+```bash
+./start.sh factors BTC       # rank 505 factors by measured predictive power
+./start.sh report BTC        # full quant report: trend, volatility, models
+./start.sh risk              # portfolio risk: sizing, VaR, concentration
+./start.sh record-stats      # how your past signals actually turned out
+./start.sh ingest            # refresh news / on-chain / fundamentals caches
+./start.sh orchestrate --news # let headlines trigger targeted re-scans
+```
+
+**On `factors`:** it ranks 505 different calculations by how well each one
+predicted what happened next. Read the "noise floor" line at the bottom of the
+output — it tells you what the luckiest of 500 *completely random* factors would
+have scored on your amount of data. If the best factor doesn't beat that line,
+you have learned nothing, and the engine says so plainly. Testing hundreds of
+things and reporting only the winner is the single most common way people fool
+themselves with backtests.
+
+**On `ingest`:** news, on-chain and fundamentals data are only read from your
+local cache during a scan — they are never fetched mid-scan. That keeps scans
+fast and stops the engine hammering free APIs. Run `ingest` (or `orchestrate`)
+to fill those caches, ideally on a schedule.
+
+---
+
+## Part 8 — Keeping it running
+
+Everything above is manual. To have it run by itself every day:
+
+```bash
+./scripts/install-cron.sh
+```
+
+Then check on it occasionally with `./start.sh doctor`.
+
+**[RUNNING_IT.md](RUNNING_IT.md) covers this properly** — the scheduled job, how
+to tell when a data source has quietly died, and what to do about it. Worth
+reading once if you plan to leave this running.
 
 ---
 
 ## The one-paragraph version
 
-Install Python + Git, `git clone` the repo, run `./start.sh scan BTC`. Everything
+Install Python + Git, `git clone` the repo, run `./start.sh`. Everything
 works with zero keys: scans, options backtests (`backtest AAPL --options`), and
 paper trades (`trade AAPL`). Add keys only for extras. Live trading needs a
 broker key **and** the `LIVE_TRADING=1` switch **and** passing the size caps —

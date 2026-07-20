@@ -1,13 +1,37 @@
 [project]
 name = "alpha-engine"
-version = "0.2.0b1"
-description = "An open, deterministic research engine that turns market data into structured, confidence-scored signals, with joint stock+options backtesting and paper-first execution. Research and education only, not investment advice."
+version = "0.4.0"
+description = "An open, deterministic research engine that turns market data into structured, confidence-scored signals, with a 504-factor library, joint stock+options backtesting, source health monitoring and paper-first execution. Research and education only, not investment advice."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [{ name = "Shubh Jain" }]
+keywords = ["quantitative-finance", "research", "backtesting", "market-data", "deterministic"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Financial and Insurance Industry",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Office/Business :: Financial :: Investment",
+    "Typing :: Typed",
+]
+# One runtime dependency, on purpose. Every network call goes through ~60 lines
+# of urllib (`net.py`) rather than requests; RSS is parsed with xml.etree; the
+# MCP server speaks JSON-RPC directly. Fewer moving parts is fewer things that
+# break unattended six months from now.
 dependencies = [
     "pydantic>=2.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/shubhj3/finance-project-quant"
+Repository = "https://github.com/shubhj3/finance-project-quant"
+Changelog = "https://github.com/shubhj3/finance-project-quant/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
