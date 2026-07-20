@@ -149,6 +149,46 @@ def _load_macro(cache: Cache, no_refresh: bool) -> dict[str, list[MacroObservati
     return data
 
 
+# --- Phase 11 context loaders -----------------------------------------------
+#
+# These are deliberately READ-ONLY. `cache/interface.py` states the rule the
+# whole architecture rests on: "analyzers read from HERE, never from the
+# network. An ingestion service keeps the store fresh; consumers just read."
+#
+# Price and macro predate that rule and still refresh inline, because a scan is
+# meaningless without a price series. Context is different: fetching four RSS
+# feeds, two Binance endpoints and a CoinGecko call on every `scan` would turn a
+# sub-second command into a multi-second one, hammer free APIs, and make the
+# test suite hit the network. Refresh belongs to `ingest` and the orchestrator's
+# freshness pass, which is exactly what those exist for.
+#
+# Empty here means "nothing cached yet", and the analyzer degrades honestly.
+
+
+def _load_news(cache: Cache) -> list[Any]:
+    """Cached headlines. Populate with `ingest news`. Phase 11a."""
+    items, _ = cache.get_news()
+    return items
+
+
+def _load_onchain(cache: Cache) -> list[Any]:
+    """Cached crypto positioning data. Populate with `ingest onchain`. Phase 11b."""
+    items, _ = cache.get_onchain()
+    return items
+
+
+def _load_fundamentals(cache: Cache, asset: str) -> list[Any]:
+    """Cached fundamentals. Populate with `ingest fundamentals`. Phase 11c."""
+    items, _ = cache.get_fundamentals(asset)
+    return items
+
+
+def _load_events(cache: Cache) -> list[Any]:
+    """Cached macro calendar. Curated by hand or by a scheduled job. Phase 11d."""
+    events, _ = cache.get_events()
+    return events
+
+
 def _scan_fno(asset: str, cache: Cache, args: argparse.Namespace, use_llm: bool = False) -> int:
     """The Indian F&O path reads an options chain, not a price series, so it has
     its own flow. `scan` itself never fetches a chain: it reads whatever the
@@ -325,10 +365,20 @@ def _build_price_signal(
     - Bollinger Bands — volatility/position context
     - Volume (OBV), VWAP — participation reads (skipped when volume is absent)
     - Support/resistance, multi-horizon alignment — structure reads
-    - Macro context (equities only) — when FRED data available
+    - Macro context (equities only) — when FRED/RBI data available, region-aware
+    - News sentiment — deterministic lexicon over cached headlines (Phase 11a)
+    - Crypto positioning — funding, OI, flows, dominance (Phase 11b)
+    - Fundamentals — accruals, leverage, growth (Phase 11c, key-gated)
+    - Forex carry — rate differential and dollar cycle (Phase 11e)
     - Volatility regime — contextual; extreme tape dampens every other weight
+    - Macro calendar — dampens confidence before known events (Phase 11d)
     """
+    from alpha_engine.analyzers.crypto_onchain import analyze_onchain
+    from alpha_engine.analyzers.forex_carry import analyze_forex_carry
+    from alpha_engine.analyzers.fundamentals import analyze_fundamentals
     from alpha_engine.analyzers.indian_equity import analyze_indian_equity
+    from alpha_engine.analyzers.macro_calendar import calendar_note, calendar_scalar
+    from alpha_engine.analyzers.sentiment import analyze_sentiment
 
     sources: list[SignalSource] = []
 
@@ -354,20 +404,64 @@ def _build_price_signal(
     if market in (Market.IN_EQUITY, Market.US_EQUITY):
         macro_data = _load_macro(cache, no_refresh)
         if macro_data:
-            sources.append(analyze_macro(macro_data))
+            region = "in" if market is Market.IN_EQUITY else "us"
+            sources.append(analyze_macro(macro_data, region=region))
 
-    # Volatility regime: extreme tape scales every directional weight down
-    # (deterministically), and the regime itself lands in the audit trail.
-    scalar = volatility_scalar(series)
-    if scalar != 1.0:
-        sources = [s.model_copy(update={"weight": round(s.weight * scalar, 4)}) for s in sources]
+        fundamentals = _load_fundamentals(cache, asset)
+        if fundamentals:
+            sources.append(analyze_fundamentals(fundamentals))
+
+    if market is Market.CRYPTO:
+        onchain = _load_onchain(cache)
+        if onchain:
+            sources.append(analyze_onchain(onchain, asset=asset))
+
+    if market is Market.FOREX:
+        macro_data = _load_macro(cache, no_refresh)
+        carry = analyze_forex_carry(series, macro=macro_data)
+        if carry.weight > 0:
+            sources.append(carry)
+
+    # News applies to every market; the analyzer filters by asset tag itself.
+    news = _load_news(cache)
+    if news:
+        sentiment = analyze_sentiment(news, asset=asset)
+        if sentiment.weight > 0:
+            sources.append(sentiment)
+
+    # Two regime layers, both purely defensive: an extreme tape and a looming
+    # policy decision each mean the model knows less than usual.
+    #
+    # They scale source weights (so the audit trail shows the inputs were
+    # discounted) AND are passed to synthesize as a conviction scalar, which is
+    # what actually lowers confidence. Weight scaling alone does nothing —
+    # every term in the confidence formula is a ratio, so a constant factor
+    # cancels out. See synthesize()'s docstring.
+    vol_scalar = volatility_scalar(series)
+    if vol_scalar != 1.0:
+        sources = [
+            s.model_copy(update={"weight": round(s.weight * vol_scalar, 4)}) for s in sources
+        ]
     sources.append(analyze_volatility(series))
+
+    events = _load_events(cache)
+    cal_scalar = calendar_scalar(events, market.value)
+    if cal_scalar < 1.0:
+        sources = [
+            s.model_copy(update={"weight": round(s.weight * cal_scalar, 4)}) for s in sources
+        ]
+        print(
+            f"[calendar] dampening conviction x{cal_scalar:.2f} — "
+            f"{calendar_note(events, market.value)}",
+            file=sys.stderr,
+        )
 
     signal = synthesize(
         asset=asset,
         market=market,
         sources=sources,
         timeframe=Timeframe.SWING,
+        conviction_scalar=vol_scalar * cal_scalar,
     )
     invalidation = trend_invalidation(series.candles, signal.direction)
     signal = signal.model_copy(update={"invalidation_level": invalidation})
@@ -715,6 +809,166 @@ def cmd_batch(args: argparse.Namespace) -> int:
     return 0 if summary["errors"] == 0 else 1
 
 
+def cmd_ingest(args: argparse.Namespace) -> int:
+    """Refresh the Phase 11 context caches (news, on-chain, fundamentals).
+
+    The scan path reads these cache-only by design, so this is what fills them.
+    Run it on a schedule (or let `orchestrate` do it) rather than on every scan:
+    hammering four RSS feeds and three APIs per signal is how you get rate
+    limited and how a one-second command becomes a ten-second one.
+    """
+    from alpha_engine.orchestrator.engine import refresh_context, stale_kinds
+
+    cache = Cache()
+    assets = tuple(a.upper() for a in (args.assets or ["BTC", "ETH", "AAPL"]))
+
+    kinds = set(args.kind) if args.kind else None
+    if kinds is None and not args.force:
+        kinds = stale_kinds(cache, assets)
+        if not kinds:
+            print("[ingest] everything is fresh; nothing to do", file=sys.stderr)
+            return 0
+        print(f"[ingest] stale: {', '.join(sorted(kinds))}", file=sys.stderr)
+
+    report = refresh_context(cache, assets, kinds=kinds, force=args.force)
+
+    if args.json:
+        print(json.dumps(report.summary(), indent=2))
+    else:
+        if report.refreshed:
+            print(f"refreshed: {', '.join(sorted(report.refreshed))}")
+        if report.skipped_fresh:
+            print(f"already fresh: {', '.join(sorted(report.skipped_fresh))}")
+        for kind, err in report.failed.items():
+            print(f"FAILED {kind}: {err}", file=sys.stderr)
+
+    return 1 if report.failed else 0
+
+
+def cmd_health(args: argparse.Namespace) -> int:
+    """Report which data sources are working and which have gone quiet.
+
+    This is the answer to the way scrapers actually fail. They rarely crash —
+    they return nothing, forever, and every signal afterwards is quietly weaker.
+    Exits non-zero when a source is degraded so a cron job can surface it.
+    """
+    from alpha_engine.health import load_health
+    from alpha_engine.ingestion.rss import FEEDS, feed_status
+
+    report = load_health()
+
+    # Feeds that are switched off by configuration are not failures, and must
+    # not be reported as if they were — but they still need to be visible, or
+    # "why is there no SEC data" has no answer anywhere.
+    disabled = {}
+    for name in FEEDS:
+        enabled, reason = feed_status(name)
+        if not enabled:
+            disabled[f"news.{name}"] = reason
+
+    if not report.sources and not disabled:
+        print("No health data yet. Run `ingest` (or the daily job) first.")
+        return 0
+
+    if args.json:
+        payload = report.summary()
+        payload["disabled"] = disabled
+        print(json.dumps(payload, indent=2))
+    else:
+        labels = {"ok": "ok", "degraded": "WARN", "broken": "FAIL", "unknown": "?"}
+        rows = [
+            (n, labels.get(e.status(), e.status()), e.explain()) for n, e in report.sources.items()
+        ]
+        rows += [(n, "off", r) for n, r in disabled.items()]
+        width = max((len(n) for n, _, _ in rows), default=10) + 2
+
+        print(f"\n{'source':<{width}} {'status':<6} detail")
+        print("-" * (width + 60))
+        for name, state, detail in sorted(rows):
+            print(f"{name:<{width}} {state:<6} {detail}")
+        print()
+
+    degraded = report.degraded()
+    if degraded:
+        # stdout, not stderr: this is the answer to the question the user asked,
+        # and mixing the two streams in a terminal prints the warnings *above*
+        # the table they refer to. Cron captures both anyway.
+        print(f"{len(degraded)} source(s) need attention:")
+        for entry in degraded:
+            print(f"  {entry.source}: {entry.explain()}")
+        print(
+            "\nA degraded source is not fatal — the engine keeps running with a\n"
+            "narrower read. But signals produced now are weaker than they look.\n"
+        )
+        return 1 if args.strict else 0
+
+    return 0
+
+
+def cmd_orchestrate(args: argparse.Namespace) -> int:
+    """Run the event-driven orchestrator: build triggers, order them by
+    priority, and execute them against one shared context.
+
+    Without --news this is a scheduled sweep. With it, recent tagged headlines
+    become targeted per-asset re-scans that run *before* the routine sweep.
+    """
+    from alpha_engine.orchestrator import load_config
+    from alpha_engine.orchestrator.engine import (
+        TriggerQueue,
+        run_triggers,
+        scheduled_trigger,
+        triggers_from_news,
+        user_trigger,
+    )
+
+    cache = Cache()
+    config = load_config(
+        config_path=args.config,
+        assets=args.assets,
+        days=args.days,
+        record=not args.no_record,
+    )
+    assets = tuple(t.asset for t in config.targets)
+    if not assets:
+        print("[error] no assets configured", file=sys.stderr)
+        return 1
+
+    queue = TriggerQueue()
+
+    if args.news:
+        news_triggers = triggers_from_news(cache, assets, max_age_hours=args.news_age)
+        for trigger in news_triggers:
+            queue.push(trigger)
+        print(f"[orchestrator] {len(news_triggers)} news-driven triggers", file=sys.stderr)
+
+    if args.assets and not args.news:
+        queue.push(user_trigger(assets))
+    elif not args.news_only:
+        queue.push(scheduled_trigger(assets))
+
+    if not queue:
+        print("[orchestrator] nothing to do", file=sys.stderr)
+        return 0
+
+    report = run_triggers(queue, config, cache=cache, refresh=not args.no_refresh_context)
+
+    if args.json:
+        print(json.dumps(report.summary(), indent=2))
+    else:
+        print(f"\nexecuted {len(report.executed)} triggers")
+        for row in report.executed:
+            direction = row.get("direction") or "-"
+            print(f"  {row['trigger']:<12} {row['asset']:<10} {row['status']:<8} {direction}")
+        print(f"\ncontext: {report.context_stats}")
+
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(json.dumps(report.summary(), indent=2))
+        print(f"[orchestrator] report written to {args.output}", file=sys.stderr)
+
+    return 0
+
+
 def cmd_dashboard(args: argparse.Namespace) -> int:
     """Launch the read-only web dashboard."""
     import sys as _sys
@@ -735,12 +989,27 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         return 1
 
 
-def cmd_factors(args: argparse.Namespace) -> int:
-    """Rank factors by predictive power for one asset."""
+def _ic_cell(value: float | None) -> str:
+    return f"{value:+.4f}" if value is not None else "   none"
 
-    from alpha_engine.cache.interface import Cache
-    from alpha_engine.quant.features import compute_factor_panel
-    from alpha_engine.quant.ranking import rank_factors
+
+def cmd_factors(args: argparse.Namespace) -> int:
+    """Rank the factor registry by measured predictive power for one asset.
+
+    Every factor in `quant/factors.py` is scored by its rank IC against forward
+    returns. The table is sorted by |IC|, so the top rows are what actually
+    moved with the future on this asset — including, often, nothing.
+    """
+
+    from alpha_engine.quant.factors import (
+        FACTOR_REGISTRY,
+        compute_panel,
+        factor_clusters,
+        factor_families,
+        factor_names,
+        flag_low_signal,
+    )
+    from alpha_engine.quant.ranking import noise_floor_ic, rank_factors
 
     market = detect_market(args.asset, getattr(args, "market", None))
     cache = Cache()
@@ -749,68 +1018,133 @@ def cmd_factors(args: argparse.Namespace) -> int:
         print("[error] factor ranking requires a price series (not F&O)", file=sys.stderr)
         return 1
 
+    families = getattr(args, "family", None)
+    known = set(factor_families())
+    if families:
+        unknown = sorted(set(families) - known)
+        if unknown:
+            print(
+                f"[error] unknown factor family: {', '.join(unknown)}\n"
+                f"        available: {', '.join(sorted(known))}",
+                file=sys.stderr,
+            )
+            return 1
+
+    selected = factor_names(families=families, include_slow=getattr(args, "all_factors", False))
+
     series = _load_series(args.asset, market, args.days, getattr(args, "no_refresh", False), cache)
     if not series or not series.candles:
         print(f"[error] no data for {args.asset}", file=sys.stderr)
         return 1
 
     print(
-        f"[ranking] computing factor panel for {args.asset} ({len(series.candles)} bars)...",
+        f"[ranking] scoring {len(selected)} factors over {len(series.candles)} bars "
+        f"of {args.asset}...",
         file=sys.stderr,
     )
 
-    panel = compute_factor_panel(series, window=20)
+    panel = compute_panel(series, names=selected)
     scores = rank_factors(series, panel, horizon=args.horizon)
+    low_signal = flag_low_signal(scores)
+
+    # Multiple-testing floor: with this many factors and this little data, what
+    # would the best *random* factor have scored? Anything below the line is
+    # indistinguishable from noise, however good the t-stat looks.
+    obs = [s.n_obs for s in scores if s.n_obs > 0]
+    median_obs = sorted(obs)[len(obs) // 2] if obs else 0
+    floor = noise_floor_ic(len(scores), median_obs)
+    best_ic = next((abs(s.rank_ic) for s in scores if s.rank_ic is not None), None)
+
+    top = getattr(args, "top", 0)
+    shown = scores[:top] if top and top > 0 else scores
 
     if getattr(args, "json", False):
-        json_out = [
-            {
-                "factor": s.name,
-                "rank_ic": s.rank_ic,
-                "hit_rate": s.hit_rate,
-                "coverage": round(s.coverage, 3),
-                "t_stat": s.t_stat,
-                "ic_decay": s.ic_by_horizon,
-            }
-            for s in scores
-        ]
-        print(json.dumps(json_out, indent=2))
-    else:
-        # Table header
-        header = f"{'factor':<30} {'rank_ic':>8} {'t_stat':>7} {'hit_rate':>9} {'coverage':>9} {'ic(1)':>7} {'ic(5)':>7} {'ic(10)':>7} {'ic(20)':>7}"
-        print(f"\nFactor ranking for {args.asset} (horizon={args.horizon})\n")
-        print(header)
-        print("-" * len(header))
-        for s in scores:
-            ic_str = f"{s.rank_ic:+.4f}" if s.rank_ic is not None else "   none"
-            t_str = f"{s.t_stat:+5.2f}" if s.t_stat is not None else "  none"
-            hr_str = f"{s.hit_rate:.1%}" if s.hit_rate is not None else "   none"
-            cov_str = f"{s.coverage:.1%}" if s.coverage > 0 else "   none"
-            ic1 = (
-                f"{s.ic_by_horizon.get(1, None):+.4f}"
-                if s.ic_by_horizon.get(1) is not None
-                else "   none"
+        print(
+            json.dumps(
+                {
+                    "asset": args.asset.upper(),
+                    "bars": len(series.candles),
+                    "horizon": args.horizon,
+                    "factors_scored": len(scores),
+                    "median_observations": median_obs,
+                    "noise_floor_ic": round(floor, 4) if floor is not None else None,
+                    "best_ic_clears_noise_floor": (
+                        bool(best_ic > floor) if floor is not None and best_ic is not None else None
+                    ),
+                    "low_signal_families": sorted(f for f, flag in low_signal.items() if flag),
+                    "factors": [
+                        {
+                            "factor": s.name,
+                            "family": FACTOR_REGISTRY[s.name].family
+                            if s.name in FACTOR_REGISTRY
+                            else None,
+                            "rank_ic": s.rank_ic,
+                            "hit_rate": s.hit_rate,
+                            "coverage": round(s.coverage, 3),
+                            "t_stat": s.t_stat,
+                            "ic_decay": s.ic_by_horizon,
+                        }
+                        for s in shown
+                    ],
+                },
+                indent=2,
             )
-            ic5 = (
-                f"{s.ic_by_horizon.get(5, None):+.4f}"
-                if s.ic_by_horizon.get(5) is not None
-                else "   none"
-            )
-            ic10 = (
-                f"{s.ic_by_horizon.get(10, None):+.4f}"
-                if s.ic_by_horizon.get(10) is not None
-                else "   none"
-            )
-            ic20 = (
-                f"{s.ic_by_horizon.get(20, None):+.4f}"
-                if s.ic_by_horizon.get(20) is not None
-                else "   none"
-            )
-            print(
-                f"{s.name:<30} {ic_str:>8} {t_str:>7} {hr_str:>9} {cov_str:>9} {ic1:>7} {ic5:>7} {ic10:>7} {ic20:>7}"
-            )
-        print()
+        )
+        return 0
 
+    header = (
+        f"{'factor':<28} {'family':<15} {'rank_ic':>8} {'t_stat':>7} {'hit_rate':>9} "
+        f"{'coverage':>9} {'ic(1)':>8} {'ic(5)':>8} {'ic(10)':>8} {'ic(20)':>8}"
+    )
+    print(f"\nFactor ranking for {args.asset.upper()} (horizon={args.horizon} bars)")
+    print(f"{len(scores)} factors scored over {len(series.candles)} bars\n")
+    print(header)
+    print("-" * len(header))
+    for s in shown:
+        family = FACTOR_REGISTRY[s.name].family if s.name in FACTOR_REGISTRY else "-"
+        hr = f"{s.hit_rate:.1%}" if s.hit_rate is not None else "   none"
+        cov = f"{s.coverage:.1%}" if s.coverage > 0 else "   none"
+        t = f"{s.t_stat:+5.2f}" if s.t_stat is not None else "  none"
+        print(
+            f"{s.name:<28} {family:<15} {_ic_cell(s.rank_ic):>8} {t:>7} {hr:>9} {cov:>9} "
+            f"{_ic_cell(s.ic_by_horizon.get(1)):>8} {_ic_cell(s.ic_by_horizon.get(5)):>8} "
+            f"{_ic_cell(s.ic_by_horizon.get(10)):>8} {_ic_cell(s.ic_by_horizon.get(20)):>8}"
+        )
+    if top and top > 0 and len(scores) > top:
+        print(f"\n... {len(scores) - top} more (use --top 0 for all, or --json)")
+
+    if floor is not None:
+        print(
+            f"\nnoise floor: |IC| >= {floor:.4f} is what the BEST of {len(scores)} purely random "
+            f"factors\nwould reach on {median_obs} observations. "
+        )
+        if best_ic is not None and best_ic <= floor:
+            print(
+                "  -> The top factor does NOT clear it. On this much data, this ranking is\n"
+                "     consistent with every factor being noise. Use more history."
+            )
+        else:
+            print(
+                "  -> The top factor clears it, which makes it worth a second look —\n"
+                "     not proof. Confirm out-of-sample before believing it."
+            )
+
+    noisy = sorted(f for f, flag in low_signal.items() if flag)
+    if noisy:
+        print(
+            f"\nlow_signal families (no factor reached |IC| >= 0.02): {', '.join(noisy)}\n"
+            "  These are kept for completeness, not because they measured useful."
+        )
+
+    if getattr(args, "clusters", False):
+        clusters = factor_clusters(panel)
+        multi = [c for c in clusters if len(c) > 1]
+        print(f"\nCorrelation clusters: {len(clusters)} independent groups among {len(panel)}")
+        print("(factors inside one group move together — they are one idea, not many)\n")
+        for c in sorted(multi, key=len, reverse=True)[:15]:
+            print(f"  [{len(c):>3}] {c[0]}  +  {', '.join(c[1:6])}{' ...' if len(c) > 6 else ''}")
+
+    print()
     return 0
 
 
@@ -1107,6 +1441,57 @@ def build_parser() -> argparse.ArgumentParser:
     batch.add_argument("--output", default=None, help="write JSON report to this path")
     batch.set_defaults(func=cmd_batch)
 
+    ingest = sub.add_parser(
+        "ingest",
+        help="refresh cached context data (news, on-chain, fundamentals)",
+    )
+    ingest.add_argument("assets", nargs="*", help="assets to fetch context for")
+    ingest.add_argument(
+        "--kind",
+        action="append",
+        choices=["news", "onchain", "fundamentals", "events"],
+        help="refresh only this kind (repeatable); default is whatever is stale",
+    )
+    ingest.add_argument("--force", action="store_true", help="refresh even if fresh")
+    ingest.add_argument("--json", action="store_true", help="emit the report as JSON")
+    ingest.set_defaults(func=cmd_ingest)
+
+    health_cmd = sub.add_parser(
+        "health",
+        help="report which data sources are working and which have gone quiet",
+    )
+    health_cmd.add_argument("--json", action="store_true", help="emit the report as JSON")
+    health_cmd.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero when any source is degraded (for cron alerting)",
+    )
+    health_cmd.set_defaults(func=cmd_health)
+
+    orch = sub.add_parser(
+        "orchestrate",
+        help="event-driven run: news triggers targeted re-scans, priority-ordered",
+    )
+    orch.add_argument("assets", nargs="*", help="override the configured portfolio")
+    orch.add_argument("--config", help="portfolio JSON file")
+    orch.add_argument("--days", type=int, default=90, help="history per scan")
+    orch.add_argument("--news", action="store_true", help="build triggers from recent headlines")
+    orch.add_argument(
+        "--news-only",
+        action="store_true",
+        help="skip the routine sweep; run only news-driven triggers",
+    )
+    orch.add_argument(
+        "--news-age", type=float, default=6.0, help="headline age cutoff in hours (default: 6)"
+    )
+    orch.add_argument("--no-record", action="store_true", help="do not append to the signal log")
+    orch.add_argument(
+        "--no-refresh-context", action="store_true", help="skip the freshness ingestion pass"
+    )
+    orch.add_argument("--json", action="store_true", help="emit the report as JSON")
+    orch.add_argument("--output", help="also write the JSON report to this path")
+    orch.set_defaults(func=cmd_orchestrate)
+
     dashboard = sub.add_parser("dashboard", help="launch the read-only web dashboard")
     dashboard.add_argument("--host", default="127.0.0.1", help="bind address")
     dashboard.add_argument("--port", type=int, default=8000, help="port to listen on")
@@ -1119,6 +1504,24 @@ def build_parser() -> argparse.ArgumentParser:
     _add_market_args(factors, default_days=365)
     factors.add_argument("--horizon", type=int, default=10, help="forward return horizon in bars")
     factors.add_argument("--json", action="store_true", help="emit the full ranking as JSON")
+    factors.add_argument(
+        "--top", type=int, default=40, help="show only the top N rows (0 = all, default: 40)"
+    )
+    factors.add_argument(
+        "--family",
+        action="append",
+        help="restrict to one factor family (repeatable), e.g. --family momentum",
+    )
+    factors.add_argument(
+        "--all-factors",
+        action="store_true",
+        help="include slow model-fitting factors (GARCH/HMM); much slower",
+    )
+    factors.add_argument(
+        "--clusters",
+        action="store_true",
+        help="also report correlation clusters (which factors are the same idea)",
+    )
     factors.set_defaults(func=cmd_factors)
 
     risk = sub.add_parser(
