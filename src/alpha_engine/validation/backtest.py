@@ -156,6 +156,14 @@ def signal_at(
         if macro_visible:
             sources.append(analyze_macro(macro_visible))
 
+    # Same two-part dampening as the live path: weights are scaled for the audit
+    # trail, and the scalar is passed to synthesize because that is where it
+    # actually affects confidence. The backtest must apply this identically to
+    # the live scan or it is not measuring the same engine.
+    #
+    # No calendar scalar here: a backtest replays history, and applying today's
+    # calendar to past bars would be lookahead. Historical event dampening would
+    # need a point-in-time calendar, which is not something this cache holds.
     scalar = volatility_scalar(past)
     if scalar != 1.0:
         sources = [s.model_copy(update={"weight": round(s.weight * scalar, 4)}) for s in sources]
@@ -166,6 +174,7 @@ def signal_at(
         market=market,
         sources=sources,
         timeframe=timeframe,
+        conviction_scalar=scalar,
     )
     # Invalidation follows the SYNTHESIZED direction, not the raw source's: a
     # zero-weight bullish source synthesizes to neutral, which must carry no level.

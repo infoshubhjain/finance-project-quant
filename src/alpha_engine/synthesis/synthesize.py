@@ -178,10 +178,32 @@ def synthesize(
     sources: list[SignalSource],
     timeframe: Timeframe = Timeframe.SWING,
     invalidation_level: float | None = None,
+    conviction_scalar: float = 1.0,
 ) -> Signal:
-    """Assemble the final Signal. thesis is left blank; the narrator fills it."""
+    """Assemble the final Signal. thesis is left blank; the narrator fills it.
+
+    `conviction_scalar` is how the regime layers (volatility, macro calendar)
+    actually reduce confidence, and it exists because of a real bug:
+
+    **Scaling every source weight by a constant does nothing to confidence.**
+    Every term in `_calibrate_confidence` is a ratio — agreement is
+    `agreeing/total`, reliability is a weighted mean, `net` is `score/total` —
+    and a constant factor cancels out of all of them. So the long-standing
+    pattern of multiplying each source's weight by `volatility_scalar` produced
+    a dampened-looking audit trail and an *identical* confidence number.
+
+    Dampening therefore has to be applied here, to the final confidence, where
+    it cannot cancel. Source weights are still scaled by the caller because a
+    reader of the audit trail should see that the inputs were discounted — but
+    the weights are the explanation, and this parameter is the effect.
+
+    Bounded to (0, 1]: a regime layer may only ever reduce conviction.
+    """
     direction, net = _net_direction(sources)
     confidence = _calibrate_confidence(sources, direction, net)
+
+    scalar = max(0.0, min(conviction_scalar, 1.0))
+    confidence = round(confidence * scalar, 4)
 
     return Signal(
         asset=asset,
