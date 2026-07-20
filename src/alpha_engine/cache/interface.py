@@ -16,10 +16,23 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 
-from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
+from pydantic import BaseModel
+
+from alpha_engine.cache.models import (
+    EventItem,
+    Fundamentals,
+    MacroObservation,
+    NewsItem,
+    OnChainObservation,
+    OptionsChain,
+    PriceSeries,
+)
 
 # TTL budget per data kind. Tune as you learn each source's update cadence.
 TTL: dict[str, timedelta] = {
@@ -28,11 +41,69 @@ TTL: dict[str, timedelta] = {
     "price:1d": timedelta(hours=12),
     "macro": timedelta(days=1),
     "chain": timedelta(minutes=15),  # OI moves intraday; chains rot fast
+    "news": timedelta(hours=2),  # headlines matter fast, but not second-by-second
+    "onchain": timedelta(hours=1),  # funding prints 3x/day, OI moves intraday
+    "fundamentals": timedelta(days=7),  # quarterly data; a weekly check is generous
+    "events": timedelta(days=1),  # a calendar changes rarely and predictably
 }
+
+
+# How long each collection is kept before old rows are dropped on write.
+#
+# Without this the collections grow forever. Measured on a conservative 40
+# headlines/day: after one year the news file holds 14,600 items and 2.9 MB, of
+# which only ~5% are recent enough for any analyzer to look at — and every scan
+# parses all of it while every write re-serializes all of it. That is the
+# "works for a week, then gets slow and weird" failure mode, and it is entirely
+# self-inflicted.
+#
+# Each window is set from what the consuming analyzer actually reads, with
+# headroom. Changing an analyzer's lookback means revisiting the matching entry
+# here; `tests/test_cache_retention.py` pins the relationship so the two cannot
+# silently drift apart.
+RETENTION: dict[str, timedelta] = {
+    # analyzers/sentiment.py ignores anything older than MAX_AGE_DAYS (21)
+    "news": timedelta(days=30),
+    # analyzers/crypto_onchain.py reads the last few days; the window is wide
+    # so on-chain history stays usable for future factor work
+    "onchain": timedelta(days=400),
+    # fundamentals are quarterly and tiny (8 rows per asset); keeping several
+    # years costs nothing and revenue growth needs 5 quarters
+    "fundamentals": timedelta(days=1825),
+}
+
+# Events are pruned by a different rule: future events must NEVER be dropped
+# (they are the whole point of a calendar), and past ones stop mattering once
+# they are behind the analyzer's horizon.
+EVENT_PAST_RETENTION = timedelta(days=90)
 
 
 def _ttl_for(kind: str, interval: str = "") -> timedelta:
     return TTL.get(f"{kind}:{interval}", TTL.get(kind, timedelta(hours=1)))
+
+
+def prune_collection(kind: str, items: list[Any], now: datetime | None = None) -> list[Any]:
+    """Drop rows past their retention window.
+
+    Pure and separately testable, because getting this wrong deletes data an
+    analyzer needs and the symptom would be a source that quietly says less than
+    it should. Items with no usable timestamp are always kept — refusing to
+    delete what we cannot date is the safe direction to fail in.
+    """
+    now = now or datetime.now(timezone.utc)
+
+    if kind == "events":
+        # Never drop a future event. A calendar that forgets tomorrow's FOMC is
+        # worse than no calendar at all.
+        cutoff = now - EVENT_PAST_RETENTION
+        return [i for i in items if getattr(i, "ts", None) is None or i.ts >= cutoff]
+
+    window = RETENTION.get(kind)
+    if window is None:
+        return items
+
+    cutoff = now - window
+    return [i for i in items if getattr(i, "ts", None) is None or i.ts >= cutoff]
 
 
 def is_stale(fetched_at: datetime, kind: str, interval: str = "") -> bool:
@@ -41,10 +112,23 @@ def is_stale(fetched_at: datetime, kind: str, interval: str = "") -> bool:
 
 
 def _tmp_path(p: Path) -> Path:
-    """Writer-private temp name. The PID suffix keeps two processes writing the
-    same asset (cron batch + a manual scan) from interleaving into one temp
-    file; each rename is atomic, last writer wins cleanly."""
-    return p.with_name(f"{p.name}.{os.getpid()}.tmp")
+    """Writer-private temp name, unique per process *and* per thread.
+
+    The PID alone is not enough. Two threads in one process share a PID, so they
+    build the same temp filename, and the second rename fails with
+    FileNotFoundError because the first already moved the file away. That is a
+    crash, not a lost update — and `web/server.py` runs a ThreadingHTTPServer,
+    so the door is open even though it only reads today.
+
+    Each rename is still atomic, so concurrent writers give last-writer-wins
+    without ever leaving a torn file.
+
+    ponytail: last-writer-wins loses concurrent updates to the same bucket. Fine
+    for a cache (the next refresh refills it) and for diagnostics. If a caller
+    ever needs read-modify-write to be atomic across processes, this needs a
+    real lock, not a better temp name.
+    """
+    return p.with_name(f"{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
 
 
 def _warn_corrupt(p: Path, e: Exception) -> None:
@@ -61,11 +145,20 @@ class LocalStore:
     swap the serialization for Parquet once series get large. Lives under data/
     so a cloner can inspect exactly what's cached."""
 
+    # Collection kinds stored as append-and-merge JSON lists (Phase 11 data).
+    # Each maps to a pydantic model and a function producing the dedup key: two
+    # items with the same key are the same fact, and the newer one wins.
+    _COLLECTIONS: dict[str, tuple[type[BaseModel], Callable[[Any], str]]] = {
+        "news": (NewsItem, lambda i: i.url or f"{i.source}:{i.ts.isoformat()}:{i.headline}"),
+        "onchain": (OnChainObservation, lambda i: f"{i.metric}:{i.ts.isoformat()}"),
+        "fundamentals": (Fundamentals, lambda i: f"{i.asset}:{i.period}"),
+        "events": (EventItem, lambda i: f"{i.region}:{i.name}:{i.ts.isoformat()}"),
+    }
+
     def __init__(self, root: str | Path = "data/cache") -> None:
         self.root = Path(root)
-        (self.root / "price").mkdir(parents=True, exist_ok=True)
-        (self.root / "macro").mkdir(parents=True, exist_ok=True)
-        (self.root / "chain").mkdir(parents=True, exist_ok=True)
+        for sub in ("price", "macro", "chain", *self._COLLECTIONS):
+            (self.root / sub).mkdir(parents=True, exist_ok=True)
 
     def _price_path(self, asset: str, interval: str) -> Path:
         return self.root / "price" / f"{asset.upper()}_{interval}.json"
@@ -150,6 +243,55 @@ class LocalStore:
             _warn_corrupt(p, e)
             return None
 
+    # -- Phase 11 collections -------------------------------------------------
+    #
+    # News, on-chain metrics, fundamentals and calendar events are all
+    # "append a batch, merge with what's there, dedup by key" — one
+    # implementation rather than four copies with different nouns.
+
+    def _collection_path(self, kind: str, bucket: str) -> Path:
+        # Buckets come from source names and tickers, so a traversal-safe
+        # filename matters: a source called "../../etc/passwd" must not escape.
+        safe = "".join(ch if ch.isalnum() or ch in "-_." else "_" for ch in bucket).strip("._")
+        return self.root / kind / f"{safe or 'default'}.json"
+
+    def write_collection(self, kind: str, bucket: str, items: list[Any]) -> None:
+        """Merge `items` into the bucket's file, newest value winning per key,
+        then drop anything past its retention window."""
+        model, key_of = self._COLLECTIONS[kind]
+        p = self._collection_path(kind, bucket)
+        merged: dict[str, Any] = {key_of(i): i for i in self.read_collection(kind, bucket)}
+        for item in items:
+            merged[key_of(item)] = item
+        kept = prune_collection(kind, list(merged.values()))
+        ordered = sorted(kept, key=lambda i: getattr(i, "ts", datetime.min))
+        tmp = _tmp_path(p)
+        tmp.write_text(json.dumps([i.model_dump(mode="json") for i in ordered], indent=2))
+        tmp.rename(p)
+
+    def read_collection(self, kind: str, bucket: str) -> list[Any]:
+        model, _ = self._COLLECTIONS[kind]
+        p = self._collection_path(kind, bucket)
+        if not p.exists():
+            return []
+        try:
+            return [model.model_validate(r) for r in json.loads(p.read_text())]
+        except Exception as e:  # noqa: BLE001 - corrupt cache = missing cache
+            _warn_corrupt(p, e)
+            return []
+
+    def read_all_collection(self, kind: str) -> list[Any]:
+        """Every bucket of a kind, concatenated. This is what an analyzer wants:
+        all the news, regardless of which feed carried it."""
+        model, _ = self._COLLECTIONS[kind]
+        out: list[Any] = []
+        for p in sorted((self.root / kind).glob("*.json")):
+            try:
+                out.extend(model.model_validate(r) for r in json.loads(p.read_text()))
+            except Exception as e:  # noqa: BLE001 - one bad file must not hide the rest
+                _warn_corrupt(p, e)
+        return out
+
 
 class Cache:
     """The public read interface. Analyzers get one of these and ask it for data.
@@ -189,3 +331,43 @@ class Cache:
 
     def put_chain(self, chain: OptionsChain) -> None:
         self.store.write_chain(chain)
+
+    # -- Phase 11 collections -------------------------------------------------
+
+    def _get_collection(self, kind: str, bucket: str | None) -> tuple[list[Any], bool]:
+        """Read one bucket or every bucket, plus whether the newest item is
+        stale. Staleness is judged on the newest `ts` present: a feed with no
+        items at all is stale by definition, which is what triggers a fetch."""
+        items = (
+            self.store.read_all_collection(kind)
+            if bucket is None
+            else self.store.read_collection(kind, bucket)
+        )
+        if not items:
+            return [], True
+        newest = max(i.ts for i in items)
+        return items, is_stale(newest, kind)
+
+    def get_news(self, source: str | None = None) -> tuple[list[NewsItem], bool]:
+        return self._get_collection("news", source)
+
+    def put_news(self, source: str, items: list[NewsItem]) -> None:
+        self.store.write_collection("news", source, items)
+
+    def get_onchain(self, metric: str | None = None) -> tuple[list[OnChainObservation], bool]:
+        return self._get_collection("onchain", metric)
+
+    def put_onchain(self, metric: str, items: list[OnChainObservation]) -> None:
+        self.store.write_collection("onchain", metric, items)
+
+    def get_fundamentals(self, asset: str) -> tuple[list[Fundamentals], bool]:
+        return self._get_collection("fundamentals", asset.upper())
+
+    def put_fundamentals(self, asset: str, items: list[Fundamentals]) -> None:
+        self.store.write_collection("fundamentals", asset.upper(), items)
+
+    def get_events(self, region: str | None = None) -> tuple[list[EventItem], bool]:
+        return self._get_collection("events", region)
+
+    def put_events(self, region: str, items: list[EventItem]) -> None:
+        self.store.write_collection("events", region, items)

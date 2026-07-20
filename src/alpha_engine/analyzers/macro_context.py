@@ -56,8 +56,61 @@ def _yoy(obs: list[MacroObservation]) -> float | None:
     return (ordered[-1].value - past) / past
 
 
-def analyze_macro(data: dict[str, list[MacroObservation]]) -> SignalSource:
-    """Fold available macro series into one small contextual SignalSource."""
+def _rbi_votes(data: dict[str, list[MacroObservation]]) -> tuple[list[float], list[str]]:
+    """The Indian half of the macro read (Phase 11d).
+
+    Two transparent votes, mirroring the US logic:
+
+    - **Repo rate direction.** RBI cutting is supportive (+1), hiking is
+      restrictive (-1). Only the latest reading is available from the scraper,
+      so direction is judged against the previous *cached* observation — which
+      means the first ever scan has no direction to report, and abstains.
+    - **FII net flows.** Foreign institutional money is the marginal buyer in
+      Indian equities. Sustained net selling is a genuine headwind regardless of
+      what domestic funds do.
+
+    Both abstain when their data is absent, which is the normal case without the
+    RBI scraper having run.
+    """
+    votes: list[float] = []
+    notes: list[str] = []
+
+    repo = sorted(data.get("RBI_REPO_RATE") or [], key=lambda o: o.ts)
+    if len(repo) >= 2:
+        delta = repo[-1].value - repo[-2].value
+        vote = 1.0 if delta <= -0.25 else -1.0 if delta >= 0.25 else 0.0
+        votes.append(vote)
+        notes.append(f"repo_delta={delta:+.2f}")
+    elif len(repo) == 1:
+        notes.append(f"repo={repo[-1].value:.2f}(no history)")
+
+    fii = sorted(data.get("FII_NET") or [], key=lambda o: o.ts)
+    if len(fii) >= 5:
+        recent = [o.value for o in fii[-5:]]
+        net = sum(recent)
+        scale = sum(abs(v) for v in recent) or 1.0
+        normalized = net / scale
+        vote = 1.0 if normalized >= 0.3 else -1.0 if normalized <= -0.3 else 0.0
+        votes.append(vote)
+        notes.append(f"fii_5d={normalized:+.2f}")
+
+    return votes, notes
+
+
+def analyze_macro(
+    data: dict[str, list[MacroObservation]],
+    region: str = "us",
+) -> SignalSource:
+    """Fold available macro series into one small contextual SignalSource.
+
+    `region` selects which policy regime drives the read:
+
+    - `"us"` — the Fed series only (the original behaviour, still the default).
+    - `"in"` — RBI repo direction and FII flows, *plus* the US series. An Indian
+      equity is not insulated from Fed policy: DXY strength and US rates
+      transmit into Indian markets directly. It tilts on Mumbai first and
+      Washington second, rather than on Washington alone.
+    """
     votes: list[float] = []
     notes: list[str] = []
 
@@ -82,6 +135,15 @@ def analyze_macro(data: dict[str, list[MacroObservation]]) -> SignalSource:
         votes.append(vote)
         notes.append(f"unrate_6m={un_delta:+.2f}")
 
+    # Regional overlay. Indian assets weight local policy more heavily than the
+    # Fed read, which is what "region-aware" has to mean to be worth anything:
+    # the RBI votes are counted twice so Mumbai outweighs Washington without
+    # silencing it.
+    if region == "in":
+        rbi_votes, rbi_notes = _rbi_votes(data)
+        votes.extend(rbi_votes * 2)
+        notes.extend(rbi_notes)
+
     if not votes:
         return SignalSource(
             name="macro.context",
@@ -99,6 +161,6 @@ def analyze_macro(data: dict[str, list[MacroObservation]]) -> SignalSource:
         direction = Direction.NEUTRAL
 
     weight = round(min(abs(score), 1.0) * MAX_WEIGHT, 4)
-    detail = " ".join(notes) + f" score={score:+.2f}"
+    detail = " ".join(notes) + f" score={score:+.2f} region={region}"
 
     return SignalSource(name="macro.context", direction=direction, weight=weight, detail=detail)

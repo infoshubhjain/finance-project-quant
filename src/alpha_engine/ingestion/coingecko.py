@@ -11,11 +11,12 @@ we don't hammer it; one fetch fills the store and consumers read locally.
 
 from __future__ import annotations
 
+import sys
 from datetime import datetime, timezone
 
 from alpha_engine import net
 from alpha_engine.cache.interface import Cache
-from alpha_engine.cache.models import Candle, Interval, PriceSeries
+from alpha_engine.cache.models import Candle, Interval, OnChainObservation, PriceSeries
 
 _BASE = "https://api.coingecko.com/api/v3"
 
@@ -87,3 +88,35 @@ def fetch_daily(
     series = PriceSeries(asset=asset, interval=Interval.DAY, candles=candles)
     cache.put_price(series)
     return series
+
+
+def fetch_btc_dominance(cache: Cache | None = None) -> OnChainObservation | None:
+    """Bitcoin's share of total crypto market cap, from CoinGecko's /global
+    endpoint. A second endpoint on a source we already talk to — not a new
+    adapter.
+
+    Why it matters: dominance rising while total market cap falls is capital
+    retreating from altcoins into BTC, which is the crypto equivalent of a
+    flight to quality. Falling dominance in a rising market is risk appetite.
+
+    Returns None (never raises) on any failure; dominance is context.
+    """
+    cache = cache or Cache()
+    try:
+        resp = net.get(f"{_BASE}/global", timeout=20)
+        if resp.status_code >= 400:
+            print(f"[coingecko] dominance: HTTP {resp.status_code}", file=sys.stderr)
+            return None
+        pct = resp.json()["data"]["market_cap_percentage"]["btc"]
+    except Exception as e:  # noqa: BLE001 - optional context, never fatal
+        print(f"[coingecko] dominance fetch failed: {e}", file=sys.stderr)
+        return None
+
+    obs = OnChainObservation(
+        metric="btc_dominance",
+        ts=datetime.now(timezone.utc),
+        value=float(pct),
+        source="coingecko",
+    )
+    cache.put_onchain("btc_dominance", [obs])
+    return obs

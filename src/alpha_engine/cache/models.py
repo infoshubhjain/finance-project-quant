@@ -95,3 +95,79 @@ class MacroObservation(BaseModel):
     ts: datetime
     value: float
     source: str  # e.g. 'fred'
+
+
+class NewsItem(BaseModel):
+    """One headline, normalized from any feed (RSS, EDGAR, a news API).
+
+    `sentiment_score` is None until an analyzer scores it. It is deliberately
+    part of the *data* shape rather than computed on every read, because
+    scoring is deterministic and caching it per-headline is what keeps the
+    analyze path free of repeated work.
+
+    `asset_tags` is how a headline reaches an asset. An untagged item is still
+    stored — it may be macro-relevant — but no asset-level analyzer will see it.
+    """
+
+    ts: datetime
+    headline: str
+    source: str  # e.g. 'sec_edgar', 'nse_announcements'
+    url: str = ""
+    asset_tags: list[str] = Field(default_factory=list)
+    sentiment_score: float | None = Field(
+        None, ge=-1.0, le=1.0, description="-1 maximally negative, +1 maximally positive"
+    )
+
+
+class OnChainObservation(BaseModel):
+    """One crypto market-structure or on-chain metric reading.
+
+    Covers both true on-chain data (exchange flows, active addresses) and
+    derivatives positioning (funding rate, open interest), because from the
+    analyzer's point of view they answer the same question: what is the
+    positioning underneath the price?
+    """
+
+    metric: str  # e.g. 'funding_rate', 'open_interest', 'btc_dominance'
+    ts: datetime
+    value: float
+    chain: str = ""  # e.g. 'bitcoin'; empty for exchange-derived metrics
+    source: str = ""  # e.g. 'binance_futures', 'glassnode'
+
+
+class Fundamentals(BaseModel):
+    """One reporting period of company fundamentals, normalized.
+
+    Every field is optional because no free source provides all of them for all
+    companies, and a missing margin must stay missing rather than becoming
+    zero — a zero margin and an unknown margin lead to opposite conclusions.
+    """
+
+    asset: str
+    period: str  # e.g. '2024-Q3' or '2024'
+    ts: datetime
+    revenue: float | None = None
+    net_income: float | None = None
+    operating_cash_flow: float | None = None
+    gross_margin: float | None = None
+    total_debt: float | None = None
+    total_equity: float | None = None
+    shares_outstanding: float | None = None
+    source: str = ""
+
+
+class EventItem(BaseModel):
+    """A scheduled, known-in-advance event: an RBI MPC date, an FOMC decision,
+    a CPI print, an earnings date.
+
+    Its use in this engine is defensive, not predictive. A signal fired the day
+    before a policy decision deserves lower confidence, and that adjustment must
+    be deterministic — which requires knowing the calendar as data.
+    """
+
+    ts: datetime
+    name: str  # e.g. 'FOMC rate decision'
+    region: str  # 'us', 'in', 'global'
+    importance: str = "medium"  # 'high' | 'medium' | 'low'
+    asset_tags: list[str] = Field(default_factory=list)
+    source: str = ""
