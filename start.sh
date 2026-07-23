@@ -16,6 +16,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/.venv"
 
+# Run from the project root no matter where the user invoked this from. Every
+# relative path below (`pip install -e .`, `data/`, `ruff .`, `pytest`,
+# `portfolio.json`) resolves against the working directory, so without this,
+# `~/somewhere $ /path/to/start.sh scan BTC` installs the wrong directory and
+# scatters a stray `data/` folder into whatever folder you happened to be in.
+# scripts/daily.sh already does this; start.sh needs it for the same reason.
+cd "$SCRIPT_DIR"
+
 # web/ is not an installed package, but the dashboard command imports it.
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
 
@@ -100,9 +108,15 @@ if ! python -c "import alpha_engine" 2>/dev/null; then
     ok "engine installed"
 fi
 
-mkdir -p data/cache/price data/cache/macro data/cache/chain \
-         data/cache/news data/cache/onchain data/cache/fundamentals data/cache/events \
-         data/signals data/reports
+# Where the engine writes. Mirrors config.data_dir(): ALPHA_DATA_DIR wins,
+# otherwise `data/` under the project root. Resolving it the same way here is
+# what keeps the checks below (is the signal log empty? how big is the cache?)
+# pointed at the files the engine actually wrote.
+DATA_DIR="${ALPHA_DATA_DIR:-$SCRIPT_DIR/data}"
+DATA_DIR="${DATA_DIR/#\~/$HOME}"
+
+mkdir -p "$DATA_DIR"/cache/{price,macro,chain,news,onchain,fundamentals,events} \
+         "$DATA_DIR"/signals "$DATA_DIR"/reports
 
 run_cli() { python -m alpha_engine.cli.main "$@"; }
 
@@ -110,7 +124,7 @@ run_cli() { python -m alpha_engine.cli.main "$@"; }
 # Helpers used by the default (dashboard) path
 # ---------------------------------------------------------------------------
 
-SIGNAL_LOG="$SCRIPT_DIR/data/signals/signals.jsonl"
+SIGNAL_LOG="$DATA_DIR/signals/signals.jsonl"
 
 seed_if_empty() {
     # The dashboard displays recorded signals. On a brand-new clone there are
@@ -209,7 +223,7 @@ show_menu() {
     read -r choice
     echo ""
     case "$choice" in
-        1) exec "$0" ;;
+        1) exec "$SCRIPT_DIR/start.sh" ;;
         2) printf "  Which asset? (e.g. BTC, ETH, AAPL, RELIANCE.NS): "
            read -r asset
            [ -z "$asset" ] && { err "No asset given."; exit 1; }
@@ -238,8 +252,8 @@ run_doctor() {
     else
         echo "    Signals:     none yet — run ./start.sh scan BTC"
     fi
-    echo "    Cached data: $(find data/cache -name '*.json' 2>/dev/null | wc -l | tr -d ' ') files"
-    echo "    Cache size:  $(du -sh data/cache 2>/dev/null | cut -f1 | tr -d ' ')"
+    echo "    Cached data: $(find "$DATA_DIR/cache" -name '*.json' 2>/dev/null | wc -l | tr -d ' ') files"
+    echo "    Cache size:  $(du -sh "$DATA_DIR/cache" 2>/dev/null | cut -f1 | tr -d ' ')"
     echo ""
 
     echo -e "  ${BOLD}Optional API keys${NC}"
@@ -252,7 +266,10 @@ run_doctor() {
     # The part that matters for a job left running for months. A source that
     # died three weeks ago produces no error anywhere — only this shows it.
     echo -e "  ${BOLD}Data source health${NC}"
-    run_cli health 2>&1 | sed 's/^/    /'
+    # `health` exits non-zero when a source is degraded, and `set -o pipefail`
+    # would make that abort doctor right here — hiding the cron and end-to-end
+    # sections in exactly the situation you ran doctor to investigate.
+    run_cli health 2>&1 | sed 's/^/    /' || true
 
     echo -e "  ${BOLD}Scheduled job${NC}"
     if crontab -l 2>/dev/null | grep -q "scripts/daily.sh"; then
@@ -260,19 +277,19 @@ run_doctor() {
     else
         echo "    cron:        NOT installed — run ./scripts/install-cron.sh"
     fi
-    if [ -f "$SCRIPT_DIR/data/reports/cron.log" ]; then
+    if [ -f "$DATA_DIR/reports/cron.log" ]; then
         local last_run
-        last_run=$(grep 'daily run starting' "$SCRIPT_DIR/data/reports/cron.log" 2>/dev/null | tail -1)
+        last_run=$(grep 'daily run starting' "$DATA_DIR/reports/cron.log" 2>/dev/null | tail -1)
         echo "    last run:    ${last_run:-never}"
         local last_result
-        last_result=$(grep '=== finished' "$SCRIPT_DIR/data/reports/cron.log" 2>/dev/null | tail -1)
+        last_result=$(grep '=== finished' "$DATA_DIR/reports/cron.log" 2>/dev/null | tail -1)
         [ -n "$last_result" ] && echo "    last result: $last_result"
     else
         echo "    last run:    never (no cron.log yet)"
     fi
-    if [ -d "$SCRIPT_DIR/data/.daily.lock" ]; then
-        warn "a daily run holds the lock (pid $(cat "$SCRIPT_DIR/data/.daily.lock/pid" 2>/dev/null || echo '?'))"
-        warn "if no run is active, remove it: rm -rf data/.daily.lock"
+    if [ -d "$DATA_DIR/.daily.lock" ]; then
+        warn "a daily run holds the lock (pid $(cat "$DATA_DIR/.daily.lock/pid" 2>/dev/null || echo '?'))"
+        warn "if no run is active, remove it: rm -rf \"$DATA_DIR/.daily.lock\""
     fi
     echo ""
 

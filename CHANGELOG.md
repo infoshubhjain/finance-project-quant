@@ -2,6 +2,45 @@
 
 All notable changes to Alpha Engine are recorded here. Dates are UTC.
 
+## [Unreleased] — the launcher, fixed
+
+`start.sh` is the first and often only command anyone runs, and it had two bugs
+that only appeared outside the happy path.
+
+### Fixed
+
+- **`start.sh` used the caller's working directory.** Every relative path in it
+  — `pip install -e ".[dev]"`, `data/`, `ruff .`, `pytest`, `portfolio.json` —
+  resolved against wherever you happened to be standing, not the project root.
+  Run `~ $ /path/to/finance-project-quant/start.sh scan BTC` and it created a
+  stray `data/` tree in your home directory and recorded signals into it,
+  silently splitting the signal log so `record-stats` reported on whichever
+  fragment it found; on a fresh clone the `pip install` would have installed the
+  wrong directory outright. It now `cd`s to its own directory first, which is
+  what `scripts/daily.sh` had always done for exactly this reason.
+- **`doctor` stopped early whenever a data source was degraded.** `health` exits
+  non-zero by design so cron can notice, and `start.sh` runs under
+  `set -o pipefail` — so that exit aborted the report mid-way and hid the
+  scheduled-job and end-to-end-scan sections, in precisely the situation you ran
+  `doctor` to investigate.
+- **`start.sh` ignored `ALPHA_DATA_DIR`** in its own checks. The "have any
+  signals been recorded yet" test and `doctor`'s cache counts read the repo's
+  `data/` regardless, so anyone using the override got a doctor reporting on an
+  empty directory and a dashboard that re-seeded on every launch.
+
+### Added
+
+- `tests/test_launcher.py` — pins all three fixes. They are one-line changes that
+  read like redundant lines, which is exactly how they get deleted again.
+
+### Changed
+
+- **Windows now follows the same path as everyone else.** `GETTING_STARTED.md`
+  had Windows users in `cmd.exe` running `python -m alpha_engine.cli.main`, while
+  the README pointed them at Git Bash where `./start.sh` just works. The guide
+  now standardises on Git Bash, so every command in it is identical on all three
+  operating systems.
+
 ## [0.4.0] — 2026-07-20 — running unattended without rotting
 
 Everything in this release exists because of one failure mode: **scrapers do not

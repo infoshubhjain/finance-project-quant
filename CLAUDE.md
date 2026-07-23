@@ -33,8 +33,21 @@ ruff check . && ruff format --check .      # CI gates lint AND format
 python -m alpha_engine.cli.main scan BTC   # manual end-to-end check
 
 pytest tests/test_core.py::test_name -q    # single test
+ruff format .                              # fix formatting
 ./start.sh <cmd>                           # zero-setup wrapper (venv + install + run)
 ```
+
+## The shape of the thing
+
+One-way pipeline under `src/alpha_engine/`; each stage may only look left:
+
+```text
+ingestion/ -> cache/ -> analyzers/ -> synthesis/ -> narrative/ -> Signal -> validation/
+(network)    (local)   (pure fns)   (weighted vote) (prose only)          (append-only log)
+```
+
+`schema/signal.py` is the contract everything compiles against. `web/` and
+`mcp_server.py` are read-only and live *outside* the installed package.
 
 ## Everything else
 

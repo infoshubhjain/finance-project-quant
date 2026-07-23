@@ -167,5 +167,13 @@ from ~23s to ~70s — that is the symptom.
   Never hardcode `Path("data/...")` in a new module: the default is cwd-relative, so a
   hardcoded path makes that module write to a different place than the rest of the engine
   when run from anywhere but the project root.
+- The same trap applies to the shell scripts, and `start.sh` fell into it. Every relative
+  path in it (`pip install -e .`, `data/`, `ruff .`, `pytest`, `portfolio.json`) resolves
+  against the *caller's* cwd, so it now `cd`s to `$SCRIPT_DIR` first — as `scripts/daily.sh`
+  already did. Its own state checks go through `$DATA_DIR`, which mirrors `data_dir()`.
+  `tests/test_launcher.py` pins both; keep them if you touch the launcher.
+- `start.sh` runs under `set -euo pipefail`, so any CLI command that exits non-zero by
+  design needs `|| true`. `health` exits non-zero when a source is degraded — unguarded,
+  that truncated `doctor` precisely when a source had gone quiet.
 - `mcp_server.py` must print **nothing** to stdout except JSON-RPC. Diagnostics go to
   stderr or the protocol stream is corrupted.

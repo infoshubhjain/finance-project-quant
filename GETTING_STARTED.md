@@ -31,8 +31,15 @@ You need **Python** (the language this runs on) and **Git** (downloads the code)
    **Important:** on the first installer screen, tick the box that says
    **"Add Python to PATH"**, then click Install.
 2. Install Git from [git-scm.com/download/win](https://git-scm.com/download/win) —
-   accept all the defaults.
-3. Open the **"Command Prompt"** app (press the Windows key, type "cmd", Enter).
+   accept all the defaults. This also installs **Git Bash**.
+3. Open **Git Bash** (press the Windows key, type "Git Bash", Enter) — *not*
+   Command Prompt.
+
+> **Why Git Bash?** The launcher is a shell script, and Git Bash gives Windows
+> the same shell Mac and Linux have. Using it means every command in this guide
+> is identical on all three systems — there is no separate Windows track to
+> follow. (WSL works too: run `wsl --install` in PowerShell as Administrator,
+> restart, then use the Ubuntu terminal.)
 
 ### Check it worked
 
@@ -58,58 +65,46 @@ cd finance-project-quant
 
 ### The fastest possible start
 
-On Mac or Linux, one command sets everything up, generates a few real signals,
-and opens a dashboard in your browser:
+One command. Same on Mac, Linux and Windows-in-Git-Bash:
 
 ```bash
 ./start.sh
 ```
 
-That is genuinely all of it. If anything goes wrong, run `./start.sh doctor` —
-it checks your Python version, whether the install worked, and tries a real scan
-to tell you exactly what is broken.
+That is genuinely all of it. It creates an isolated Python environment inside
+the project folder, installs what it needs there, generates a few real signals
+so there is something to look at, and opens a dashboard in your browser at
+<http://localhost:8000>. Press `Ctrl+C` to stop it.
 
-And if you would rather not remember any commands at all:
+Nothing else on your computer is changed — deleting the `.venv` folder undoes
+the whole install.
 
-```bash
-./start.sh menu
-```
+If anything goes wrong, run `./start.sh doctor`. It checks your Python version,
+whether the install worked, which data sources are alive, and then tries a real
+scan to tell you exactly what is broken.
 
+And if you would rather not remember any commands at all, `./start.sh menu`
 gives you a numbered list to pick from.
-
-The rest of this guide uses individual commands, so you can see what each piece
-does.
 
 ### Your first scan
 
-Now run your first scan. **Use the block for your computer** — both do the same
-thing (set everything up, then read the market for Bitcoin), no API keys needed.
+The same launcher runs any single command. No setup step first — it handles that
+itself the first time:
 
-**Mac / Linux** — one command does everything:
 ```bash
 ./start.sh scan BTC
 ```
 
-> If you see "permission denied", run `chmod +x start.sh` once, then try again.
-
-**Windows** — install once, then run:
-
-```bash
-python -m pip install -e .
-python -m alpha_engine.cli.main scan BTC
-```
-
-> You run the `pip install` line **only once, ever**. After that, every command
-> is just the `python -m alpha_engine.cli.main ...` part.
-
 The first run takes a minute (it's installing things). When it finishes you'll
 see a block of JSON — a structured read on Bitcoin: a direction, a confidence
-score, and a plain-English `thesis`. **That's the whole engine working.**
+score, and a plain-English `thesis`. **That's the whole engine working.** No API
+key is needed for this.
 
-> **Windows users — one rule for the rest of this guide:** wherever you see
-> `./start.sh`, type `python -m alpha_engine.cli.main` instead; everything after
-> it stays the same. So `./start.sh scan AAPL` becomes
-> `python -m alpha_engine.cli.main scan AAPL`.
+> If you see "permission denied", run `chmod +x start.sh` once, then try again.
+>
+> You can also run it from any folder using its full path —
+> `~/finance-project-quant/start.sh scan BTC` works from anywhere and still
+> keeps all its data inside the project folder.
 
 Try a few more (all free, no keys):
 ```bash
@@ -163,13 +158,8 @@ You can also have an outside alert (like a TradingView alert) trigger a trade.
 Start the receiver — it **refuses to run without a password**, so set one:
 
 ```bash
-# Mac/Linux:
 export WEBHOOK_SECRET="pick-a-long-random-password"
 ./start.sh webhook
-
-# Windows:
-set WEBHOOK_SECRET=pick-a-long-random-password
-python -m alpha_engine.cli.main webhook
 ```
 
 Then any alert that sends a POST to `http://your-computer:8787/webhook` with that
@@ -272,7 +262,6 @@ Live trading is protected by **three separate locks**:
 
 Only then:
 ```bash
-# Mac/Linux:
 export LIVE_TRADING=1
 export WEBHOOK_SECRET="your-password"
 ./start.sh trade NIFTY --option --expiry 2026-07-31 --qty 1
@@ -280,8 +269,8 @@ export WEBHOOK_SECRET="your-password"
 **Place ONE tiny order first and confirm it in your broker's app.** Treat that
 first real fill as the true test — nothing else proves the live path works.
 
-To go back to safety, just close the terminal or run `unset LIVE_TRADING`
-(Windows: `set LIVE_TRADING=`). Paper mode returns instantly.
+To go back to safety, just close the terminal or run `unset LIVE_TRADING`.
+Paper mode returns instantly.
 
 ---
 

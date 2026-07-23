@@ -48,6 +48,11 @@ Press `Ctrl+C` in the terminal to stop it.
 
 **No API key is needed.** Crypto and US equities work out of the box.
 
+`start.sh` is also the only command you need afterwards — `./start.sh scan BTC`,
+`./start.sh doctor`, and so on. It runs from any working directory (call it by
+its full path) and always keeps its environment and data inside the project
+folder.
+
 <details>
 <summary><b>Windows users — read this first</b></summary>
 
