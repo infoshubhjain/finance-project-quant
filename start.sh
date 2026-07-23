@@ -256,6 +256,46 @@ run_doctor() {
     echo "    Cache size:  $(du -sh "$DATA_DIR/cache" 2>/dev/null | cut -f1 | tr -d ' ')"
     echo ""
 
+    # An empty CA trust store makes every HTTPS fetch fail with
+    # CERTIFICATE_VERIFY_FAILED — every source, every fallback, instantly. It
+    # reads like "the internet is down" or "the API blocked me", so without
+    # this check the obvious next move is to go debugging the data sources,
+    # which is the wrong tree entirely. The tell is a scan that fails in
+    # milliseconds rather than timing out.
+    echo -e "  ${BOLD}TLS certificates${NC}"
+    python - <<'PY' || true
+import ssl, sys, os
+
+paths = ssl.get_default_verify_paths()
+cafile = paths.cafile or paths.openssl_cafile
+try:
+    roots = len(ssl.create_default_context().get_ca_certs())
+except Exception:
+    roots = 0
+
+if roots:
+    print(f"    trust store: {roots} root certificates loaded")
+else:
+    print("    trust store: EMPTY — this breaks every HTTPS fetch")
+    print(f"                 (looked in: {cafile or 'nowhere'}"
+          f"{'' if cafile and os.path.exists(cafile) else ' — missing'})")
+    print("")
+    print("    Every source will fail with CERTIFICATE_VERIFY_FAILED. Fix it with")
+    print("    whichever matches how Python was installed:")
+    print("")
+    print("      python.org installer:  open the Applications folder, then")
+    print(f"        /Applications/Python {sys.version_info.major}.{sys.version_info.minor}"
+          "/Install Certificates.command")
+    print("")
+    print("      anything else:")
+    print("        pip install certifi")
+    print("        export SSL_CERT_FILE=\"$(python -c 'import certifi;print(certifi.where())')\"")
+    print("")
+    print("    Do NOT disable certificate verification to get around this — it")
+    print("    turns off the check that the data came from who it claims to.")
+PY
+    echo ""
+
     echo -e "  ${BOLD}Optional API keys${NC}"
     for key in FRED_API_KEY FINNHUB_API_KEY FMP_API_KEY GLASSNODE_API_KEY LLM_API_KEY SEC_USER_AGENT; do
         if [ -n "${!key:-}" ]; then echo "    $key: set"
@@ -298,6 +338,7 @@ run_doctor() {
         ok "the pipeline works end to end"
     else
         warn "the test scan failed — usually no internet, or a rate-limited data source"
+        warn "if it failed instantly rather than hanging, check the TLS section above"
     fi
     echo ""
 }

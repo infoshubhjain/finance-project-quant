@@ -175,5 +175,12 @@ from ~23s to ~70s — that is the symptom.
 - `start.sh` runs under `set -euo pipefail`, so any CLI command that exits non-zero by
   design needs `|| true`. `health` exits non-zero when a source is degraded — unguarded,
   that truncated `doctor` precisely when a source had gone quiet.
+- **Every source failing at once with `CERTIFICATE_VERIFY_FAILED` is an empty CA trust
+  store, not a dead source.** `net.py` uses the stdlib default SSL context, so it reads
+  the system store and honours `SSL_CERT_FILE`. One cause produces two messages —
+  `self-signed certificate in certificate chain` when the server sends its (self-signed)
+  root, `unable to get local issuer certificate` when it sends only the intermediate — so
+  differing errors across sources are not evidence of differing problems. `doctor` checks
+  the store and prints the fix. Never "solve" this by disabling verification.
 - `mcp_server.py` must print **nothing** to stdout except JSON-RPC. Diagnostics go to
   stderr or the protocol stream is corrupted.

@@ -102,6 +102,48 @@ whole path works.
 | Dashboard is empty | No signals recorded yet | `./start.sh scan BTC` |
 | `HTTP 429` while scanning | Free API rate limit | Wait a few minutes. The cache exists to absorb this — don't retry in a loop |
 | `Permission denied: ./start.sh` | Script not executable | `chmod +x start.sh` |
+| `CERTIFICATE_VERIFY_FAILED` on **every** source | Python has no CA certificates | See below — `./start.sh doctor` names the fix |
+
+</details>
+
+<details>
+<summary><b><code>CERTIFICATE_VERIFY_FAILED</code> — every source fails at once</b></summary>
+
+If every asset fails in milliseconds with `[SSL: CERTIFICATE_VERIFY_FAILED]`,
+including the fallback sources, Python cannot verify **any** website's identity.
+This is an install problem, not a network one — and not an engine one.
+
+Confusingly it produces two different messages from the same cause, depending on
+whether a server sends the top of its certificate chain:
+
+```text
+CoinGecko / Yahoo : unable to get local issuer certificate
+Binance           : self-signed certificate in certificate chain
+```
+
+Confirm it:
+
+```bash
+python3 -c "import ssl; print(len(ssl.create_default_context().get_ca_certs()))"
+```
+
+`0` means an empty trust store (a healthy machine prints a few hundred). Fix it
+with whichever matches how Python was installed:
+
+```bash
+# Installed from python.org (the usual cause on macOS):
+open "/Applications/Python 3.13/Install Certificates.command"   # match your version
+
+# Homebrew / pyenv / conda:
+pip install certifi
+export SSL_CERT_FILE="$(python -c 'import certifi; print(certifi.where())')"
+```
+
+`./start.sh doctor` reports the trust store and prints these instructions.
+
+> **Do not disable certificate verification to work around this.** It turns off
+> the check that data came from the source it claims to — and this engine makes
+> decisions from that data.
 
 </details>
 
@@ -319,6 +361,26 @@ registry: its value at bar `t` must be identical whether computed on the full
 series or on a series truncated at `t`. Adding a factor is one dictionary entry
 and nothing else — it then appears in `factors` output, gets IC-scored, and is
 covered by that test automatically.
+
+Nine of the 504 (GARCH, HMM) are tagged `cost="slow"` — they refit a model at
+every bar and are ~100× the rest. They are excluded from the default panel;
+`--all-factors` opts in, at the price of turning a ~4-second command into
+minutes.
+
+**How much history you have decides how many factors exist.** Each one declares
+`min_bars` and returns `None` — never a plausible-looking wrong number — until it
+has enough data. A default 90-day scan therefore leaves roughly 40% of the
+library reporting `coverage: 0.0`:
+
+| History | Fast factors that can produce a value |
+|---|---|
+| 90 bars (the scan default) | 308 of 495 |
+| 252 bars (~1 trading year) | 457 of 495 |
+| 365 bars | 494 of 495 |
+
+So if a factor you expected is missing from `factors` output, the usual reason is
+that the asset does not have enough bars yet — fetch more history rather than
+assuming the factor is broken.
 
 ---
 

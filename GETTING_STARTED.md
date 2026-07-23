@@ -284,7 +284,56 @@ Paper mode returns instantly.
 | `.env` changes seem ignored | Make sure the file is named exactly `.env` (not `.env.txt`) and is in the project folder. |
 | Live order rejected: "no securityId" | You need `data/dhan_instruments.json` (Part 6, lock 3). |
 | The dashboard is blank | No signals recorded yet. Run `./start.sh scan BTC`, then reload. |
+| The dashboard shows only one asset | You have signals for one asset. Run `./start.sh scan-all` to fill it from `portfolio.json`. |
+| Every source fails with `CERTIFICATE_VERIFY_FAILED` | Python has no certificates. See below. |
 | Anything else | Run `./start.sh doctor` — it diagnoses the whole setup and tries a real scan. |
+
+### `CERTIFICATE_VERIFY_FAILED` on every single source
+
+If every asset fails **instantly** (milliseconds, not a hang) with
+`[SSL: CERTIFICATE_VERIFY_FAILED]`, your internet is fine and the engine is
+fine — Python just can't verify that any website is who it says it is.
+
+A **certificate authority** is a trusted company (DigiCert, Let's Encrypt) that
+vouches for websites. Your Mac keeps a list of them. Python sometimes keeps its
+*own* list, and on some installs that list is empty — so it trusts nothing.
+
+It shows up as two different messages from the one cause, depending on whether a
+server happens to send the top of its certificate chain:
+
+```text
+CoinGecko / Yahoo : unable to get local issuer certificate
+Binance           : self-signed certificate in certificate chain
+```
+
+Check it:
+
+```bash
+python3 -c "import ssl; print(len(ssl.create_default_context().get_ca_certs()))"
+```
+
+A healthy machine prints a few hundred. `0` is the problem. Fix it with whichever
+matches how you installed Python:
+
+```bash
+# Installed from python.org (most common on Mac) — run the file it left for you.
+# Check your version first with: python3 -V
+open "/Applications/Python 3.13/Install Certificates.command"
+
+# Homebrew, pyenv or conda:
+source .venv/bin/activate
+pip install certifi
+export SSL_CERT_FILE="$(python -c 'import certifi; print(certifi.where())')"
+```
+
+Put that `export` line in `~/.zshrc` so it survives a new terminal. Then
+`./start.sh scan-all` will work.
+
+> ⚠️ You will find advice online telling you to switch certificate verification
+> off. **Don't.** That disables the check that price data actually came from
+> Binance rather than someone impersonating it — and this engine makes decisions
+> from that data. `./start.sh doctor` reports your trust store and prints the
+> correct fix.
 
 ---
 
