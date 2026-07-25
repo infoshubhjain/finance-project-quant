@@ -1,0 +1,70 @@
+# Runs the daily signal scan in the cloud, so it no longer depends on a Mac
+# being awake at 9am. This is "git scraping": a scheduled job runs the engine
+# and commits the resulting signal log back to the repo, which becomes the
+# persistent store. The append-only log survives because each run checks out
+# the previous commit, appends today's signals, and pushes.
+#
+# Free on a public repo (unlimited Actions minutes), and the daily commit keeps
+# the schedule from being auto-disabled for inactivity.
+name: daily-signals
+
+on:
+  schedule:
+    # 06:00 UTC daily. GitHub cron is always UTC — change this to move the time.
+    # (06:00 UTC = 01:00 US-Central / 11:30 India.) Scheduled runs are
+    # best-effort: GitHub can delay them 15 min to a few hours under load, and
+    # very occasionally skip one. For daily bars that is fine.
+    - cron: "0 6 * * *"
+  workflow_dispatch: {} # also lets you run it by hand from the Actions tab
+
+# The job commits back to the repo, so it needs write access to contents.
+permissions:
+  contents: write
+
+# Never let two daily runs overlap and race on the same signal log.
+concurrency:
+  group: daily-signals
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the engine
+        run: pip install -e .
+
+      - name: Refresh context caches (news, on-chain, fundamentals)
+        # Context is optional and best-effort — a failed feed must never block
+        # the scan. Keyless by default; add keys as repo secrets and uncomment.
+        continue-on-error: true
+        run: python -m alpha_engine.cli.main ingest BTC ETH SOL AAPL MSFT GOOGL NVDA
+        # env:
+        #   FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
+        #   FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+
+      - name: Batch scan (records signals, writes the daily report)
+        run: python -m alpha_engine.cli.main batch --output data/reports/daily.json
+
+      - name: Source health (informational — never blocks the commit)
+        run: python -m alpha_engine.cli.main health || true
+
+      - name: Commit the day's signals back to the repo
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/signals/signals.jsonl
+          if git diff --cached --quiet; then
+            echo "no new signals to commit"
+          else
+            # [skip ci] so this data commit doesn't trigger the test workflow.
+            git commit -m "data: daily signals $(date -u +%Y-%m-%d) [skip ci]"
+            git push
+          fi
