@@ -10,11 +10,14 @@ name: daily-signals
 
 on:
   schedule:
-    # 06:00 UTC daily. GitHub cron is always UTC — change this to move the time.
-    # (06:00 UTC = 01:00 US-Central / 11:30 India.) Scheduled runs are
-    # best-effort: GitHub can delay them 15 min to a few hours under load, and
-    # very occasionally skip one. For daily bars that is fine.
-    - cron: "0 6 * * *"
+    # 22:00 UTC daily — after the US market close (20:00-21:00 UTC), so each day's
+    # US daily bar is final when the scan runs and the signal is dated the same
+    # day as the market it reflects. GitHub cron is always UTC; to move it to your
+    # local morning, convert and edit this line (22:00 UTC = 17:00 US-Central /
+    # 03:30 India). Scheduled runs are best-effort: GitHub can delay them 15 min
+    # to a few hours under load and very occasionally skip one. For daily bars,
+    # fine — and one run per day is deliberate (see the note at the bottom).
+    - cron: "0 22 * * *"
   workflow_dispatch: {} # also lets you run it by hand from the Actions tab
 
 # The job commits back to the repo, so it needs write access to contents.
@@ -43,15 +46,27 @@ jobs:
 
       - name: Refresh context caches (news, on-chain, fundamentals)
         # Context is optional and best-effort — a failed feed must never block
-        # the scan. Keyless by default; add keys as repo secrets and uncomment.
+        # the scan. Keys are OPTIONAL: every one below degrades gracefully when
+        # its secret is unset (the engine gates on a truthy value, so an absent
+        # secret is an empty string is "off"). Add a key at repo Settings ->
+        # Secrets and variables -> Actions and it activates here automatically —
+        # no edit to this file needed.
         continue-on-error: true
         run: python -m alpha_engine.cli.main ingest BTC ETH SOL AAPL MSFT GOOGL NVDA
-        # env:
-        #   FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
-        #   FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }}
+        env:
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }} # higher crypto limits
+          FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }} # company news
+          FMP_API_KEY: ${{ secrets.FMP_API_KEY }} # fundamentals
+          GLASSNODE_API_KEY: ${{ secrets.GLASSNODE_API_KEY }} # crypto on-chain
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }} # enables SEC EDGAR news
 
       - name: Batch scan (records signals, writes the daily report)
+        # FRED macro refreshes inline during an equity scan, so its key belongs
+        # here, not on ingest. CoinGecko is used for price fetches in both steps.
         run: python -m alpha_engine.cli.main batch --output data/reports/daily.json
+        env:
+          FRED_API_KEY: ${{ secrets.FRED_API_KEY }} # US macro context on equity signals
+          COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
 
       - name: Source health (informational — never blocks the commit)
         run: python -m alpha_engine.cli.main health || true
