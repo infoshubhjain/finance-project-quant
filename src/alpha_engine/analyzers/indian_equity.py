@@ -1,10 +1,11 @@
 """Indian equity analyzer. A dedicated analyzer for Indian cash equities that
-extends the base equity trend with India-specific context.
+extends the shared trend core with India-specific context.
 
 This analyzer combines:
-1. Price trend (delegates to equity_trend for the core MA read)
-2. Market hours awareness (Indian markets trade 9:15 AM - 3:30 PM IST)
-3. Gap analysis (Indian equities often gap on global cues)
+1. Price trend — delegates to the shared `analyze_trend` (dual-MA + momentum),
+   the exact same tested core crypto and US equity use. No copy of the MA math.
+2. Gap analysis (Indian equities often gap on global cues)
+3. Intraday range (volatility context)
 
 This is a scaffold for India-specific analysis. Future extensions could include
 FII/DII flow data, sector rotation, and Indian volatility index (India VIX).
@@ -14,9 +15,9 @@ Cardinal rule compliance: pure function, no network, no LLM, deterministic.
 
 from __future__ import annotations
 
-from alpha_engine.analyzers.crypto_trend import _sma
+from alpha_engine.analyzers.crypto_trend import analyze_trend
 from alpha_engine.cache.models import PriceSeries
-from alpha_engine.schema.signal import Direction, SignalSource
+from alpha_engine.schema.signal import SignalSource
 
 
 def _gap_analysis(candles: list) -> float | None:
@@ -70,59 +71,39 @@ def analyze_indian_equity(
     """Produce one SignalSource for an Indian cash equity.
 
     Combines:
-    1. Price trend (dual MA) — the core directional read
+    1. Price trend — the shared `analyze_trend` core (dual-MA + momentum)
     2. Gap analysis — India-specific overnight risk signal
     3. Intraday range — volatility context
 
-    The trend read is the primary input. Gap and range provide contextual
-    modifiers that adjust weight but rarely flip direction alone.
+    The trend read is the primary input; direction comes entirely from it. Gap
+    and range are contextual modifiers — a large average gap trims the weight
+    (more overnight uncertainty) but never flips the direction.
     """
-    closes = series.closes()
-    fast_ma = _sma(closes, fast)
-    slow_ma = _sma(closes, slow)
+    base = analyze_trend(series, fast=fast, slow=slow, name="in_equity.trend")
 
-    if fast_ma is None or slow_ma is None or slow_ma == 0:
-        return SignalSource(
-            name="in_equity.trend",
-            direction=Direction.NEUTRAL,
-            weight=0.0,
-            detail="insufficient history",
-        )
+    # Same neutral-on-insufficient-history contract as the shared core; nothing
+    # India-specific to add when there isn't even a trend read.
+    if base.detail == "insufficient history":
+        return base
 
-    # Core trend read
-    spread = (fast_ma - slow_ma) / slow_ma
-    if spread > 0:
-        direction = Direction.BULLISH
-    elif spread < 0:
-        direction = Direction.BEARISH
-    else:
-        direction = Direction.NEUTRAL
+    weight = base.weight
+    detail = base.detail
 
-    base_weight = min(abs(spread) * 10, 1.0)
-
-    # Gap analysis modifier
+    # Gap modifier: large average gaps mean more overnight risk -> trim weight.
     avg_gap = _gap_analysis(series.candles)
-    gap_detail = ""
     if avg_gap is not None:
-        gap_detail = f" avg_gap={avg_gap:.4f}"
-        # Large gaps increase uncertainty -> slightly lower weight
+        detail += f" avg_gap={avg_gap:.4f}"
         if avg_gap > 0.02:  # >2% average gap
-            base_weight *= 0.9
+            weight = round(weight * 0.9, 4)
 
-    # Intraday range modifier
+    # Intraday range: reported as context, does not change the vote.
     avg_range = _intraday_range(series.candles)
-    range_detail = ""
     if avg_range is not None:
-        range_detail = f" avg_range={avg_range:.4f}"
-
-    weight = round(min(base_weight, 1.0), 4)
-
-    detail = f"fast={fast_ma:.2f} slow={slow_ma:.2f} spread={spread:.4f}"
-    detail += gap_detail + range_detail
+        detail += f" avg_range={avg_range:.4f}"
 
     return SignalSource(
         name="in_equity.trend",
-        direction=direction,
+        direction=base.direction,
         weight=weight,
         detail=detail,
     )
