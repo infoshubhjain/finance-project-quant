@@ -18,7 +18,6 @@ import pytest
 
 from alpha_engine.ingestion.angelone import (
     AngelOneLiveClient,
-    _get_with_retry,
     _normalize_expiry,
     _parse_option_chain,
 )
@@ -237,84 +236,3 @@ def test_fetch_chain_calls_correct_url(monkeypatch):
     assert captured["params"]["exchange"] == "NFO"
     assert captured["params"]["tradingsymbol"] == "NIFTY"
     assert "Bearer jwt-token" in captured["headers"]["Authorization"]
-
-
-# --- rate-limit retry ------------------------------------------------------------
-
-
-class _StubResponse:
-    def __init__(self, status_code: int, headers: dict[str, str] | None = None):
-        self.status_code = status_code
-        self.headers = headers or {}
-
-    def raise_for_status(self) -> None:
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-    def json(self) -> dict:
-        return {"data": {"records": []}}
-
-
-def _patch_sleep(monkeypatch) -> list[float]:
-    """Replace time.sleep with a recorder so retry tests run instantly."""
-    waits: list[float] = []
-    import alpha_engine.ingestion.angelone as angelone_mod
-
-    monkeypatch.setattr(angelone_mod.time, "sleep", waits.append)
-    return waits
-
-
-def test_retry_recovers_after_429(monkeypatch):
-    waits = _patch_sleep(monkeypatch)
-    responses = [_StubResponse(429), _StubResponse(429), _StubResponse(200)]
-
-    import alpha_engine.ingestion.angelone as angelone_mod
-
-    monkeypatch.setattr(angelone_mod.net, "get", lambda url, **kw: responses.pop(0))
-
-    resp = _get_with_retry("http://x", params={}, headers={})
-    assert resp.status_code == 200
-    assert waits == [2.0, 4.0]  # exponential backoff between attempts
-
-
-def test_retry_gives_up_after_max_attempts(monkeypatch):
-    waits = _patch_sleep(monkeypatch)
-    calls = {"n": 0}
-
-    def always_429(url: str, **kw: Any) -> _StubResponse:
-        calls["n"] += 1
-        return _StubResponse(429)
-
-    import alpha_engine.ingestion.angelone as angelone_mod
-
-    monkeypatch.setattr(angelone_mod.net, "get", always_429)
-
-    resp = _get_with_retry("http://x", params={}, headers={})
-    assert resp.status_code == 429  # last response returned so caller sees the error
-    assert calls["n"] == 4  # 1 initial + 3 retries
-    assert waits == [2.0, 4.0, 8.0]
-
-
-def test_retry_honors_retry_after_header(monkeypatch):
-    waits = _patch_sleep(monkeypatch)
-    responses = [_StubResponse(429, headers={"Retry-After": "7"}), _StubResponse(200)]
-
-    import alpha_engine.ingestion.angelone as angelone_mod
-
-    monkeypatch.setattr(angelone_mod.net, "get", lambda url, **kw: responses.pop(0))
-
-    resp = _get_with_retry("http://x", params={}, headers={})
-    assert resp.status_code == 200
-    assert waits == [7.0]
-
-
-def test_retry_does_not_retry_client_errors(monkeypatch):
-    waits = _patch_sleep(monkeypatch)
-
-    import alpha_engine.ingestion.angelone as angelone_mod
-
-    monkeypatch.setattr(angelone_mod.net, "get", lambda url, **kw: _StubResponse(401))
-
-    resp = _get_with_retry("http://x", params={}, headers={})
-    assert resp.status_code == 401  # bad credentials should fail fast, not retry
-    assert waits == []

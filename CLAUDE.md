@@ -20,6 +20,10 @@ never a number. No network calls or randomness in `analyzers/` or `synthesis/`.
 The default path stays keyless. Never weaken the research-only disclaimer. If a
 request would break this, flag it and propose the correct layer instead.
 
+`execution/` (Dhan orders) is paper by default: a real order goes out only with
+`LIVE_TRADING=1` **and** broker credentials present. Never make live the default,
+and never let a request move money without that explicit gate.
+
 ## Commands
 
 ```bash
@@ -44,10 +48,16 @@ One-way pipeline under `src/alpha_engine/`; each stage may only look left:
 ```text
 ingestion/ -> cache/ -> analyzers/ -> synthesis/ -> narrative/ -> Signal -> validation/
 (network)    (local)   (pure fns)   (weighted vote) (prose only)          (append-only log)
+                                                               `-> execution/ (paper-first, gated)
 ```
 
 `schema/signal.py` is the contract everything compiles against. `web/` and
 `mcp_server.py` are read-only and live *outside* the installed package.
+`.github/workflows/daily-signals.yml` runs the daily scan in the cloud (git scraping).
+
+## External libraries
+
+- **Pretext** (text measurement): docs at [docs/pretext.md](docs/pretext.md). Use `prepare()` + `layout()` to measure text height without DOM reflow. See the README for full API.
 
 ## Everything else
 

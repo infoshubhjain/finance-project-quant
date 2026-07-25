@@ -15,6 +15,7 @@ HTTP error statuses (4xx/5xx) do NOT raise here — they come back as a normal
 from __future__ import annotations
 
 import json as _json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -114,3 +115,39 @@ def post(
     timeout: float = 20,
 ) -> Response:
     return _request("POST", url, json=json, data=data, headers=headers, timeout=timeout)
+
+
+# Shared retry policy for rate-limited free-tier APIs (broker market-data feeds
+# 429 under a burst). Adapters used to carry byte-identical copies of this loop;
+# it belongs next to get()/post() since net.py already hands back Retry-After.
+RETRYABLE_STATUSES = {429, 500, 502, 503}
+
+
+def get_with_retry(
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+    timeout: float = 20,
+    max_retries: int = 3,
+    backoff_base_seconds: float = 2.0,
+) -> Response:
+    """GET with retries on rate-limit (429) and transient server errors.
+
+    Honors a Retry-After header when the API sends one; otherwise waits
+    backoff_base * 2^attempt (2s, 4s, 8s). The final attempt's response is
+    returned as-is so the caller's raise_for_status() surfaces the real error.
+    """
+    resp: Response | None = None
+    for attempt in range(max_retries + 1):
+        resp = get(url, params=params, headers=headers, timeout=timeout)
+        if resp.status_code not in RETRYABLE_STATUSES or attempt == max_retries:
+            return resp
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            wait = float(retry_after) if retry_after else backoff_base_seconds * (2**attempt)
+        except ValueError:
+            wait = backoff_base_seconds * (2**attempt)
+        time.sleep(wait)
+    assert resp is not None  # loop always runs at least once
+    return resp

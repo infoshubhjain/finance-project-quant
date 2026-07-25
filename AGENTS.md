@@ -128,6 +128,10 @@ from ~23s to ~70s — that is the symptom.
 - **Style**: type hints, `from __future__ import annotations`, Pydantic for data shapes,
   ruff line length 100, docstrings that explain *why*.
 
+## External libraries
+
+- **Pretext** (`@chenglou/pretext`): JS text measurement without DOM reflow. Docs at `docs/pretext.md`. Package at `~/Desktop/Projects/pretext/package/`. Use for the web dashboard text layout.
+
 ## Gotchas
 
 - Tests must stay network-free; free APIs (CoinGecko keyless) 429 easily — the cache

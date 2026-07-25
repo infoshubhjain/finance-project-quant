@@ -159,3 +159,64 @@ def test_params_are_url_encoded(monkeypatch):
     assert captured_url is not None
     # urllib.parse.urlencode uses + for spaces
     assert "key=value+with+spaces" in captured_url or "key=value%20with%20spaces" in captured_url
+
+
+# --- get_with_retry (shared by the rate-limited broker adapters) ---------------
+
+
+class _StubResponse:
+    def __init__(self, status_code: int, headers: dict[str, str] | None = None):
+        self.status_code = status_code
+        self.headers = headers or {}
+
+
+def _patch_sleep(monkeypatch) -> list[float]:
+    """Replace time.sleep with a recorder so retry tests run instantly."""
+    waits: list[float] = []
+    monkeypatch.setattr(net.time, "sleep", waits.append)
+    return waits
+
+
+def test_retry_recovers_after_429(monkeypatch):
+    waits = _patch_sleep(monkeypatch)
+    responses = [_StubResponse(429), _StubResponse(429), _StubResponse(200)]
+    monkeypatch.setattr(net, "get", lambda url, **kw: responses.pop(0))
+
+    resp = net.get_with_retry("http://x", params={}, headers={})
+    assert resp.status_code == 200
+    assert waits == [2.0, 4.0]  # exponential backoff between attempts
+
+
+def test_retry_gives_up_after_max_attempts(monkeypatch):
+    waits = _patch_sleep(monkeypatch)
+    calls = {"n": 0}
+
+    def always_429(url, **kw):
+        calls["n"] += 1
+        return _StubResponse(429)
+
+    monkeypatch.setattr(net, "get", always_429)
+
+    resp = net.get_with_retry("http://x", params={}, headers={})
+    assert resp.status_code == 429  # last response returned so caller sees the error
+    assert calls["n"] == 4  # 1 initial + 3 retries
+    assert waits == [2.0, 4.0, 8.0]
+
+
+def test_retry_honors_retry_after_header(monkeypatch):
+    waits = _patch_sleep(monkeypatch)
+    responses = [_StubResponse(429, headers={"Retry-After": "7"}), _StubResponse(200)]
+    monkeypatch.setattr(net, "get", lambda url, **kw: responses.pop(0))
+
+    resp = net.get_with_retry("http://x", params={}, headers={})
+    assert resp.status_code == 200
+    assert waits == [7.0]
+
+
+def test_retry_does_not_retry_client_errors(monkeypatch):
+    waits = _patch_sleep(monkeypatch)
+    monkeypatch.setattr(net, "get", lambda url, **kw: _StubResponse(401))
+
+    resp = net.get_with_retry("http://x", params={}, headers={})
+    assert resp.status_code == 401  # bad credentials should fail fast, not retry
+    assert waits == []

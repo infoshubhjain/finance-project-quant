@@ -16,7 +16,6 @@ Env contract:
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from alpha_engine import net
@@ -35,42 +34,6 @@ _EXCHANGE_NFO = "NFO"
 _SEGMENT_OPTIONS = "OPT"
 _RIGHT_CE = "CE"
 _RIGHT_PE = "PE"
-
-
-# SmartAPI rate-limits market-data calls (~10 req/min on the free tier), so a
-# burst of fetches gets HTTP 429 back. Retrying with exponential backoff keeps
-# a `watch NIFTY BANKNIFTY ...` batch usable without the caller thinking about it.
-_MAX_RETRIES = 3
-_BACKOFF_BASE_SECONDS = 2.0
-_RETRYABLE_STATUSES = {429, 500, 502, 503}
-
-
-def _get_with_retry(
-    url: str,
-    *,
-    params: dict[str, str],
-    headers: dict[str, str],
-    timeout: int = 20,
-) -> net.Response:
-    """GET with retries on rate-limit (429) and transient server errors.
-
-    Honors a Retry-After header when the API sends one; otherwise waits
-    2s, 4s, 8s. The final attempt's response is returned as-is so the
-    caller's raise_for_status() surfaces the real error message.
-    """
-    resp: net.Response | None = None
-    for attempt in range(_MAX_RETRIES + 1):
-        resp = net.get(url, params=params, headers=headers, timeout=timeout)
-        if resp.status_code not in _RETRYABLE_STATUSES or attempt == _MAX_RETRIES:
-            return resp
-        retry_after = resp.headers.get("Retry-After")
-        try:
-            wait = float(retry_after) if retry_after else _BACKOFF_BASE_SECONDS * (2**attempt)
-        except ValueError:
-            wait = _BACKOFF_BASE_SECONDS * (2**attempt)
-        time.sleep(wait)
-    assert resp is not None  # loop always runs at least once
-    return resp
 
 
 def _headers(token: str, api_key: str) -> dict[str, str]:
@@ -241,7 +204,7 @@ class AngelOneLiveClient:
             "expirydate": normalized_expiry,
         }
         headers = _headers(self._token, self.credentials.api_key)
-        resp = _get_with_retry(url, params=params, headers=headers)
+        resp = net.get_with_retry(url, params=params, headers=headers)
         resp.raise_for_status()
         raw = resp.json()
 
