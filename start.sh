@@ -150,6 +150,40 @@ seed_if_empty() {
     fi
 }
 
+warn_if_thin() {
+    # seed_if_empty only fires on a *completely* empty log. A log with one or
+    # two assets (a hand scan, or a half-finished run) sails past it and opens a
+    # near-empty dashboard where every cross-asset panel — correlations,
+    # diversification — is blank, which reads as "broken" rather than "thin".
+    # Say so, and point at the one command that fills it.
+    [ -s "$SIGNAL_LOG" ] || return 0
+    local recorded portfolio
+    recorded=$(python - "$SIGNAL_LOG" <<'PY' 2>/dev/null || echo 0
+import json, sys
+assets = set()
+for line in open(sys.argv[1]):
+    try:
+        assets.add(json.loads(line)["signal"]["asset"])
+    except Exception:
+        pass
+print(len(assets))
+PY
+)
+    portfolio=$(python - <<'PY' 2>/dev/null || echo 0
+import json
+try:
+    print(len(json.load(open("portfolio.json"))["assets"]))
+except Exception:
+    print(0)
+PY
+)
+    # Only nudge when the log is genuinely sparse relative to the portfolio.
+    if [ "$recorded" -lt "$portfolio" ] && [ "$recorded" -le 2 ]; then
+        warn "only $recorded of $portfolio portfolio assets have signals — the dashboard will look sparse"
+        warn "fill it with:  ./start.sh scan-all"
+    fi
+}
+
 open_browser() {
     local url="$1"
     # Give the server a moment to bind before pointing a browser at it.
@@ -349,15 +383,34 @@ PY
 
 case "${1:-}" in
     ""|dashboard)
+        # Port 8000 by default; PORT overrides it. Without this, anything else
+        # already on 8000 (another copy of this, a dev server) made the default
+        # launch fail with a bare traceback and no hint of the cause.
+        PORT="${PORT:-8000}"
+        if ! python - "$PORT" <<'PY' 2>/dev/null
+import socket, sys
+s = socket.socket()
+try:
+    s.bind(("127.0.0.1", int(sys.argv[1])))
+finally:
+    s.close()
+PY
+        then
+            die "Port $PORT is already in use." \
+"  Something is already listening on $PORT — often another ./start.sh.
+  Use a different port:   PORT=8001 ./start.sh
+  or stop whatever holds $PORT and try again."
+        fi
         seed_if_empty
+        warn_if_thin
         echo ""
-        log "Starting the dashboard at ${BOLD}http://localhost:8000${NC}"
+        log "Starting the dashboard at ${BOLD}http://localhost:$PORT${NC}"
         echo "    Your browser should open by itself. If it doesn't, copy that"
         echo "    address into it manually."
         echo "    Press Ctrl+C here when you want to stop."
         echo ""
-        open_browser "http://localhost:8000"
-        run_cli dashboard
+        open_browser "http://localhost:$PORT"
+        run_cli dashboard --port "$PORT"
         ;;
     help|--help|-h)
         show_help

@@ -46,3 +46,19 @@ def test_doctor_survives_a_degraded_source() -> None:
     and end-to-end sections in precisely the case doctor exists to diagnose."""
     body = START_SH.read_text()
     assert "run_cli health 2>&1 | sed 's/^/    /' || true" in body
+
+
+def test_dashboard_port_is_overridable() -> None:
+    """8000 hardcoded meant the default launch failed with a bare traceback when
+    anything else held the port. PORT must override it and reach the dashboard."""
+    body = START_SH.read_text()
+    assert 'PORT="${PORT:-8000}"' in body
+    assert 'run_cli dashboard --port "$PORT"' in body
+
+
+def test_thin_signal_log_is_flagged() -> None:
+    """seed_if_empty only fires on a fully empty log; a one- or two-asset log opens
+    a sparse dashboard that reads as broken. warn_if_thin must nudge toward scan-all."""
+    body = START_SH.read_text()
+    assert "warn_if_thin" in body
+    assert "scan-all" in body

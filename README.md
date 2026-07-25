@@ -369,18 +369,20 @@ minutes.
 
 **How much history you have decides how many factors exist.** Each one declares
 `min_bars` and returns `None` — never a plausible-looking wrong number — until it
-has enough data. A default 90-day scan therefore leaves roughly 40% of the
-library reporting `coverage: 0.0`:
+has enough data. The `factors` command already defaults to **365 days** for this
+reason, so out of the box it produces 494 of the 495 fast factors:
 
 | History | Fast factors that can produce a value |
 |---|---|
-| 90 bars (the scan default) | 308 of 495 |
+| 90 bars | 308 of 495 |
 | 252 bars (~1 trading year) | 457 of 495 |
-| 365 bars | 494 of 495 |
+| 365 bars (the `factors` default) | 494 of 495 |
 
-So if a factor you expected is missing from `factors` output, the usual reason is
-that the asset does not have enough bars yet — fetch more history rather than
-assuming the factor is broken.
+Coverage only shrinks if you *shorten* the window with `factors BTC --days 90`.
+The factor library is used only by `factors` and `backtest` — a plain `scan`
+never touches it, so a scan's shorter 90-day window has no effect on factors. If
+a factor you expected is missing from `factors` output, the usual reason is that
+the asset itself has fewer than 365 bars of real history.
 
 ---
 
