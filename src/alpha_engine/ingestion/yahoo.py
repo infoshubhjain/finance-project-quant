@@ -16,11 +16,12 @@ from __future__ import annotations
 import time
 from datetime import datetime, timezone
 
-from alpha_engine import net
+from alpha_engine import health, net
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import Candle, Interval, PriceSeries
 
 _BASE = "https://query1.finance.yahoo.com/v8/finance/chart"
+SOURCE = "yahoo"
 _HEADERS = {"User-Agent": "Mozilla/5.0 (alpha-engine; research/education tool)"}
 
 
@@ -64,24 +65,50 @@ def _parse_chart(payload: dict) -> list[Candle]:
 
 
 def fetch_daily(asset: str, days: int = 365, cache: Cache | None = None) -> PriceSeries:
-    """Fetch daily OHLCV for a US equity symbol, normalize, cache, and return it."""
+    """Fetch daily OHLCV for an equity symbol, normalize, cache, and return it.
+
+    Uses `get_with_retry` rather than a bare `get`, because Yahoo rate-limits by
+    IP and answers **HTTP 429** when it does — observed both from a GitHub
+    runner and from a residential connection after a burst of scans. A bare GET
+    turns that transient throttle into a failed scan for every equity in the
+    batch, and the retry helper (which honours `Retry-After`) already existed in
+    `net.py` for exactly this; the Indian broker adapters were using it and this
+    one was not.
+
+    Price is also the only data kind with no alternative source. Every keyless
+    equity API checked on 2026-07-26 — Stooq on both its .com and .pl domains —
+    now answers with a JavaScript proof-of-work challenge served at HTTP 200,
+    which is worse than a refusal because a naive client caches the challenge
+    page as data. So the strategy here is to survive the throttle rather than
+    route around it, and to record health so a real outage is visible instead of
+    looking like a quiet market.
+    """
     cache = cache or Cache()
     asset = asset.upper()
 
     now = int(time.time())
-    resp = net.get(
-        f"{_BASE}/{asset}",
-        params={
-            "period1": str(now - days * 86400),
-            "period2": str(now),
-            "interval": "1d",
-            "events": "history",
-        },
-        headers=_HEADERS,
-        timeout=20,
-    )
-    resp.raise_for_status()
-    candles = _parse_chart(resp.json())
+    try:
+        resp = net.get_with_retry(
+            f"{_BASE}/{asset}",
+            params={
+                "period1": str(now - days * 86400),
+                "period2": str(now),
+                "interval": "1d",
+                "events": "history",
+            },
+            headers=_HEADERS,
+            timeout=20,
+        )
+        resp.raise_for_status()
+        candles = _parse_chart(resp.json())
+    except Exception as e:  # noqa: BLE001 - recorded, then re-raised for the caller
+        health.record(f"price.{SOURCE}", error=f"{type(e).__name__}: {e}")
+        raise
+
+    # Recorded per source so a dead price feed is as visible as a dead news
+    # feed. Price had no health record at all before this, which meant the most
+    # important input in the engine was the least observable.
+    health.record(f"price.{SOURCE}", items=len(candles))
 
     series = PriceSeries(asset=asset, interval=Interval.DAY, candles=candles)
     cache.put_price(series)

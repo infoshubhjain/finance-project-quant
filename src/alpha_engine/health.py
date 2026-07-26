@@ -126,7 +126,16 @@ class SourceHealth:
         """One line a human can act on."""
         state = self.status(now)
         if state == "unknown":
-            return "never run"
+            # `unknown` covers two genuinely different situations and reporting
+            # both as "never run" is the exact confusion this module exists to
+            # prevent. A source nobody has asked for is fine; a source that was
+            # asked and answered with nothing is the start of a silent outage,
+            # and it reads as "never run" for its first two days — which is when
+            # noticing it is cheapest.
+            if self.total_attempts == 0:
+                return "never run"
+            attempts = "attempt" if self.total_attempts == 1 else "attempts"
+            return f"{self.total_attempts} {attempts}, no data yet — watch this"
         if state == "broken":
             if self.consecutive_errors >= ERROR_STREAK_LIMIT:
                 return f"{self.consecutive_errors} consecutive errors: {self.last_error}"

@@ -20,9 +20,11 @@ on:
     - cron: "0 22 * * *"
   workflow_dispatch: {} # also lets you run it by hand from the Actions tab
 
-# The job commits back to the repo, so it needs write access to contents.
+# The job commits back to the repo (contents) and opens an issue when a data
+# source dies (issues). Both are the minimum for what it actually does.
 permissions:
   contents: write
+  issues: write
 
 # Never let two daily runs overlap and race on the same signal log.
 concurrency:
@@ -46,13 +48,24 @@ jobs:
 
       - name: Refresh context caches (news, on-chain, fundamentals)
         # Context is optional and best-effort — a failed feed must never block
-        # the scan. Keys are OPTIONAL: every one below degrades gracefully when
-        # its secret is unset (the engine gates on a truthy value, so an absent
-        # secret is an empty string is "off"). Add a key at repo Settings ->
-        # Secrets and variables -> Actions and it activates here automatically —
-        # no edit to this file needed.
+        # the scan, so this step is allowed to fail and the job continues. It is
+        # NOT allowed to fail silently: `--strict` exits non-zero when a whole
+        # data kind came back with zero items, and the "Fail if the scrape
+        # degraded" step at the end turns that into a red build.
+        #
+        # That combination is the fix for a real month-long outage. Binance
+        # answers HTTP 451 to every request from a datacenter IP, so the runner
+        # collected no futures positioning data at all — while this job reported
+        # success every single day, because a dead feed raises nothing and the
+        # health record was an aggregate that one live feed kept green.
+        #
+        # Keys are OPTIONAL: every one below degrades gracefully when its secret
+        # is unset (the engine gates on a truthy value, so an absent secret is
+        # an empty string is "off"). Add a key at repo Settings -> Secrets and
+        # variables -> Actions and it activates here automatically.
+        id: ingest
         continue-on-error: true
-        run: python -m alpha_engine.cli.main ingest BTC ETH SOL AAPL MSFT GOOGL NVDA
+        run: python -m alpha_engine.cli.main ingest BTC ETH SOL AAPL MSFT GOOGL NVDA --strict
         env:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }} # higher crypto limits
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }} # company news
@@ -69,17 +82,99 @@ jobs:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
 
       - name: Source health (informational — never blocks the commit)
+        # Informational only in CI, and deliberately so: the runner starts with
+        # an empty data/ every time, so health has no history here and cannot
+        # detect the multi-day decay it is designed for. That job belongs to a
+        # long-lived install. The per-run signal is `ingest --strict` above.
         run: python -m alpha_engine.cli.main health || true
 
-      - name: Commit the day's signals back to the repo
+      - name: Commit the day's signals and report back to the repo
+        # Runs even when the scrape degraded. Partial data is still the day's
+        # record, and losing it would punish the operator twice for one broken
+        # feed. The build still goes red at the next step.
+        if: always()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/signals/signals.jsonl
+          # INTEGRITY GATE — refuses to commit a shrunken or corrupted signal
+          # log. This step is both the log's backup and the thing most able to
+          # destroy it, so the check runs before anything is staged. See
+          # scripts/verify_signal_log.py for what it checks and why.
+          python scripts/verify_signal_log.py data/signals/signals.jsonl
+
+          # Stage whichever artefacts exist. `if: always()` means this step also
+          # runs when the batch scan crashed before writing its report, and a
+          # bare `git add` on a missing path aborts the whole step.
+          for artefact in data/signals/signals.jsonl data/reports/daily.json; do
+            if [ -f "$artefact" ]; then git add "$artefact"; fi
+          done
           if git diff --cached --quiet; then
             echo "no new signals to commit"
           else
             # [skip ci] so this data commit doesn't trigger the test workflow.
             git commit -m "data: daily signals $(date -u +%Y-%m-%d) [skip ci]"
-            git push
+            # The scheduled run races nothing, but a manual dispatch can land
+            # while another commit is being pushed. Rebase and retry rather than
+            # losing the day's data to a non-fast-forward.
+            for attempt in 1 2 3; do
+              if git push; then exit 0; fi
+              # No ref is named here on purpose: actions/checkout sets the
+              # branch to track its own origin/<branch>, so a bare pull follows
+              # whichever ref this run was dispatched on. Hardcoding main would
+              # rebase a branch run onto the wrong history.
+              echo "push rejected (attempt $attempt); rebasing on the tracked upstream"
+              git pull --rebase --autostash || exit 1
+            done
+            echo "::error::could not push the day's signals after 3 attempts"
+            exit 1
           fi
+
+      - name: Open an issue when the scrape degrades
+        # A red build is only an alarm if somebody sees it. GitHub emails the
+        # actor on a failed *scheduled* run, but that mail is easy to filter and
+        # says nothing about which source died — and this whole class of bug is
+        # one that goes unnoticed for a month at a time.
+        #
+        # An issue is the right channel: it notifies, it persists, it holds the
+        # diagnosis, and re-running the same failure updates the existing issue
+        # rather than opening a new one every day.
+        if: steps.ingest.outcome == 'failure'
+        continue-on-error: true # never let the alarm's failure mask the alarm
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Daily scan: a data source returned nothing"
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number -q '.[0].number')
+          BODY=$(printf '%s\n' \
+            "The scheduled scan on $(date -u +%Y-%m-%d) reported a data kind with **zero items**." \
+            "" \
+            "Today's signals were still committed — partial data is still the day's record —" \
+            "but at least one source produced nothing, so those signals are weaker than they look." \
+            "" \
+            "**Run:** $RUN_URL" \
+            "" \
+            "Look in the *Refresh context caches* step for lines starting with \`EMPTY\` or \`WARNING\`." \
+            "" \
+            "Common cause: a public API began geo-blocking this runner. Reachability is a property" \
+            "of the network and changes without notice — run \`gh workflow run probe-exchanges.yml\`" \
+            "to see what this runner can still reach, then reorder \`FUTURES_CHAIN\`.")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "commented on existing issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label "data-outage" 2>/dev/null \
+              || gh issue create --title "$TITLE" --body "$BODY"
+          fi
+
+      - name: Fail if the scrape degraded
+        # The last line of defence against a green build with no data. Without
+        # this the whole point of --strict is lost: the step above is
+        # continue-on-error, so its failure would otherwise vanish.
+        if: steps.ingest.outcome == 'failure'
+        run: |
+          echo "::error::Context ingestion reported a data kind with zero items."
+          echo "The signals for today were still committed, but at least one"
+          echo "source produced nothing. Check the 'Refresh context caches' step"
+          echo "for lines starting with EMPTY or WARNING."
+          exit 1

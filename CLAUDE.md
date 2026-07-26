@@ -34,7 +34,9 @@ pip install -e ".[dev]"
 # A change is "done" only when all three pass:
 pytest -q                                  # network-free suite
 ruff check . && ruff format --check .      # CI gates lint AND format
-python -m alpha_engine.cli.main scan BTC   # manual end-to-end check
+python -m alpha_engine.cli.main scan BTC --no-record   # manual end-to-end check
+#   --no-record matters: the signal log is a track record, and a developer
+#   verifying a build should not append test scans to it.
 
 pytest tests/test_core.py::test_name -q    # single test
 ruff format .                              # fix formatting
@@ -51,13 +53,55 @@ ingestion/ -> cache/ -> analyzers/ -> synthesis/ -> narrative/ -> Signal -> vali
                                                                `-> execution/ (paper-first, gated)
 ```
 
-`schema/signal.py` is the contract everything compiles against. `web/` and
-`mcp_server.py` are read-only and live *outside* the installed package.
+`schema/signal.py` is the contract everything compiles against. `web/` and `mcp.py` are
+read-only transports and live *inside* the package, so a `pip install` ships the
+dashboard, terminal, API and MCP server.
 `.github/workflows/daily-signals.yml` runs the daily scan in the cloud (git scraping).
 
-## External libraries
+Three directories sit *beside* the pipeline, not in it: `quant/` (the 504-factor
+registry, IC ranking, Black-Scholes), `orchestrator/` (headline-triggered
+re-scans), and `strategy/` (user-written trading rules + the trade-level
+backtester). All consume the pipeline; nothing in the pipeline imports them.
 
-- **Pretext** (text measurement): docs at [docs/pretext.md](docs/pretext.md). Use `prepare()` + `layout()` to measure text height without DOM reflow. See the README for full API.
+## The two backtesters answer different questions
+
+Confusing them is the easiest mistake to make here.
+
+- `validation/backtest.py` — *were the engine's own signals right?* Hit rate and
+  calibration. No-lookahead is **structural**: `signal_at()` truncates the series
+  before any analysis runs, so no caller can leak the future in.
+- `strategy/engine.py` — *what would my own rule's account have done?* Trades,
+  equity curve, Sharpe, drawdown. A user strategy gets the whole series, so
+  no-lookahead can only be **detected**: the run re-executes the strategy on
+  truncated history and reports bars whose signal changed. A non-empty
+  `lookahead_violations` voids every metric in that report — always lead with it.
+
+## The three outside surfaces
+
+`toolkit.py` holds one tool table; MCP-over-stdio (`mcp_server.py`),
+MCP-over-HTTP and REST (`web/server.py`) are thin transports over it. **Add a
+tool there, not in a transport.** If it can write to disk, name its write
+arguments in `WRITE_ARGS` so the AI terminal never sees them and the HTTP write
+gate can refuse them.
+
+The web app has two sections: `/dashboard` (read-only, no keys, no AI) and
+`/terminal` (chat where an AI drives the tools using the *user's own* LLM key —
+never stored, never logged). The terminal's real guarantee is not that the model
+behaves; it is that every tool call and raw result is returned next to the prose,
+so any number can be checked.
+
+## Three silent footguns
+
+These fail quietly — no crash, wrong behavior for months. Full list in AGENTS.md.
+
+- **Writable paths go through `config.data_dir()`.** A hardcoded `Path("data/...")`
+  is cwd-relative, so that module writes somewhere else than the rest of the engine.
+- **Every new `ingestion/` adapter calls `alpha_engine.health.record`** with an item
+  count, per *feed*. Adapters degrade to empty by design, so without it a dead source
+  looks identical to a quiet one.
+- **News / on-chain / fundamentals are cache-only in the scan path.** `_load_news`,
+  `_load_onchain`, `_load_fundamentals` in `cli/main.py` never fetch; `ingest` and
+  `orchestrate` populate them. Making them fetch inline takes `pytest` from ~23s to ~70s.
 
 ## Everything else
 

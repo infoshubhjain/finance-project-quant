@@ -42,11 +42,16 @@ That is the whole setup. It will:
    your computer is touched,
 3. install what it needs,
 4. generate a few real signals so there is something to look at,
-5. open a dashboard in your browser at **http://localhost:8000**.
+5. open it in your browser at **http://localhost:8000**.
+
+You land on two doors: **Dashboard** (everything the engine has decided — no
+keys, no AI) and **Terminal** (ask questions in plain English; you supply your
+own LLM key). The same tools are on an HTTP API and over MCP.
 
 Press `Ctrl+C` in the terminal to stop it.
 
-**No API key is needed.** Crypto and US equities work out of the box.
+**No API key is needed.** Crypto and US equities work out of the box. An LLM key
+is only for the Terminal, and it is yours — the server never stores one.
 
 `start.sh` is also the only command you need afterwards — `./start.sh scan BTC`,
 `./start.sh doctor`, and so on. It runs from any working directory (call it by
@@ -267,6 +272,54 @@ news.rbi_press           FAIL   4 consecutive errors: HTTP 503
 news.sec_edgar           off    SEC_USER_AGENT is not set
 ```
 
+### Backtest your own strategy
+
+`backtest` asks whether the *engine's* signals were right. `strategy-backtest`
+asks a different question: if you had actually traded your own rule, what would
+the account have done?
+
+```bash
+./start.sh strategies                       # what's available
+./start.sh strategy-backtest BTC --strategy SMACrossover --trades 5
+./start.sh strategy-backtest NIFTY --strategy RSIReversal \
+    --param length=21 --option NIFTY24000CE --trade-on option
+```
+
+A strategy is a small Python class in `strategies/`. Implement one method and it
+is discovered automatically:
+
+```python
+from alpha_engine.strategy.base import BaseStrategy
+from alpha_engine.strategy.indicators import ema, crossed_above, crossed_below
+
+class MyStrategy(BaseStrategy):
+    name = "My Strategy"
+    params = {"fast": 9, "slow": 21}
+
+    def generate_signals(self, candles):
+        fast = ema(candles, self.params["fast"])
+        slow = ema(candles, self.params["slow"])
+        out = [0] * len(candles)
+        for i in range(len(candles)):
+            if crossed_above(fast, slow, i):
+                out[i] = 1
+            elif crossed_below(fast, slow, i):
+                out[i] = -1
+        return out
+```
+
+You get trades, an equity curve, Sharpe / Sortino / Calmar, max drawdown, win
+rate and profit factor. Two guards are built in rather than left to discipline:
+the position is filled one bar *after* the signal, and every run re-executes your
+strategy on truncated history to catch it reading future bars. **If it reports a
+lookahead violation, every other number in that report is void** — which is the
+point of checking.
+
+The `--option` flag is the idea worth stealing: a signal on the index does not
+become a trade until the option's own chart confirms it. Override
+`verify_on_option` to confirm on volume, open interest, or anything else in your
+option data.
+
 ### Use it from an AI assistant
 
 The engine speaks [MCP](https://modelcontextprotocol.io), so Claude Code, Cursor
@@ -283,7 +336,8 @@ or any MCP client can call it directly:
 }
 ```
 
-Five read-only tools: `scan`, `report`, `backtest`, `factors`, `record_stats`.
+Nine read-only tools: `scan`, `report`, `backtest`, `options_backtest`,
+`factors`, `record_stats`, `health`, `list_strategies`, `strategy_backtest`.
 
 This fits the architecture unusually well, and not by luck. MCP means the model
 *calls* deterministic tools and *reads* results — it never computes the numbers.
@@ -291,6 +345,51 @@ That is exactly this project's core rule, so an assistant structurally cannot
 invent a figure; it can only ask the engine questions and relay what tested
 Python answered. The research-only disclaimer is attached to every payload, so
 it travels wherever the output gets pasted.
+
+### Use it over HTTP
+
+The same tools, no MCP client required. `./start.sh dashboard` serves them:
+
+```bash
+curl localhost:8000/api/v1/tools                    # self-describing catalogue
+curl "localhost:8000/api/v1/tools/scan?asset=BTC"
+curl -X POST localhost:8000/api/v1/tools/strategy_backtest \
+     -H 'content-type: application/json' \
+     -d '{"asset":"BTC","strategy":"SMACrossover","params":{"fast_length":5}}'
+
+# MCP over HTTP, for remote MCP clients
+curl -X POST localhost:8000/api/v1/mcp \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+All three transports dispatch into one table (`alpha_engine/toolkit.py`), so
+they cannot drift apart.
+
+It binds `127.0.0.1` and is read-only by default. Exposing it needs deliberate
+choices: `ALPHA_API_KEY` is **required** to bind any other interface (the server
+refuses rather than warns), `--allow-writes` is needed before any caller can
+append to the signal log, and requests are rate-limited per IP. No route accepts
+strategy source code — loading a strategy executes Python, and that is remote
+code execution over a network, not a feature.
+
+### Talk to it
+
+`http://localhost:8000/terminal` is a chat where an AI answers by calling the
+engine's tools. You bring your own key — OpenAI, Anthropic, OpenRouter or Groq
+— and it is used for the request and dropped. The server stores no keys; there
+is nothing to leak.
+
+```bash
+./start.sh terminal "does BTC look bullish, and how much should I trust that?"
+export LLM_API_KEY=sk-...   # or --api-key
+```
+
+The model is instructed never to compute or recall a number. But an instruction
+is not a guarantee, so the real one is structural: **every tool call and its raw
+result is shown next to the answer.** Any figure in the prose can be checked
+against the payload that produced it, without trusting the model at all. The
+terminal also cannot write — the write-capable arguments are stripped from the
+schema it is given, so it never even sees them.
 
 ---
 
@@ -416,16 +515,20 @@ src/alpha_engine/
   synthesis/            weighted vote + confidence calibration
   narrative/            the LLM lives here, and only here
   quant/                features, 504-factor registry, ranking, models, reports
+  strategy/             your own trading rules + the trade-level backtester
   validation/           append-only log, outcome scoring, backtests, calibration
   orchestrator/         batch runner + event-driven trigger engine
   execution/            order placement (paper-first, live is gated)
+  toolkit.py            THE tool table — MCP, HTTP and the AI terminal share it
   cli/main.py           every command
   health.py             source health tracking (makes silent decay visible)
-web/                    read-only dashboard (outside the package, no build step)
-mcp_server.py           MCP server for AI assistants (stdlib only)
+strategies/             drop a BaseStrategy subclass here; it's found automatically
+  web/                  dashboard + AI terminal + HTTP API (no build step)
+  mcp.py                MCP over stdio (stdlib only, transport only)
+mcp_server.py           3-line shim; MCP client configs point at a file path
 scripts/daily.sh        the scheduled job: lock, timeout, rotation, health check
 scripts/install-cron.sh one-command cron setup
-tests/                  ~2200 tests, all network-free
+tests/                  ~2330 tests, all network-free
 ```
 
 ---

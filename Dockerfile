@@ -33,9 +33,11 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY src/ src/
-COPY web/ web/
 COPY portfolio.json ./
 COPY .env.example ./
+# Built-in strategies ship inside the package; this is the mount point for the
+# operator's own, so `alpha-engine strategies` finds them when it is bind-mounted.
+COPY strategies/ strategies/
 
 # Create data directories
 RUN mkdir -p data/cache/price data/cache/macro data/cache/chain data/signals

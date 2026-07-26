@@ -230,6 +230,30 @@ class LocalStore:
             _warn_corrupt(p, e)
             return []
 
+    def macro_fetched_at(self, series_id: str) -> datetime | None:
+        """When this series was last written, from the file's mtime.
+
+        Macro is the one kind whose freshness cannot be read off its own data.
+        A price series carries `fetched_at`; a macro series is a bare JSON array
+        of observations, and the newest observation's *date* is not when we
+        fetched it — CPI for June is published in July and is the current print
+        all month.
+
+        Using the observation date meant `is_stale` compared a 45-day-old
+        datapoint against a 1-day TTL and answered True for a file written one
+        second earlier. The macro cache therefore never hit: every equity scan
+        refetched all three FRED series, so one `batch` run over four equities
+        made twelve identical API calls instead of three.
+
+        The mtime is the honest answer to "when did we last ask FRED", needs no
+        change to the on-disk format, and stays correct when a fetch returns
+        nothing new (the file is still rewritten, so we did still ask).
+        """
+        p = self._macro_path(series_id)
+        if not p.exists():
+            return None
+        return datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+
     def write_chain(self, chain: OptionsChain) -> None:
         p = self._chain_path(chain.underlying)
         tmp = _tmp_path(p)
@@ -312,11 +336,20 @@ class Cache:
         return series, is_stale(series.fetched_at, "price", interval)
 
     def get_macro(self, series_id: str) -> tuple[list[MacroObservation], bool]:
+        """Returns (observations, stale).
+
+        Staleness is measured from when the series was last FETCHED, not from
+        the date of its newest observation — see `LocalStore.macro_fetched_at`
+        for why that distinction is the difference between a working cache and
+        one that never hits.
+        """
         obs = self.store.read_macro(series_id)
         if not obs:
             return [], True
-        newest = max(o.ts for o in obs)
-        return obs, is_stale(newest, "macro")
+        fetched_at = self.store.macro_fetched_at(series_id)
+        if fetched_at is None:
+            return obs, True
+        return obs, is_stale(fetched_at, "macro")
 
     def get_chain(self, underlying: str) -> tuple[OptionsChain | None, bool]:
         """Returns (chain, stale). Same contract as get_price: None means

@@ -47,7 +47,30 @@ from typing import Any
 from alpha_engine import health
 from alpha_engine.cache.interface import Cache, is_stale
 from alpha_engine.cache.models import PriceSeries
+from alpha_engine.ingestion import binance_futures, bybit_futures, gate_futures
 from alpha_engine.schema.signal import Market
+
+#: Futures positioning adapters, tried in order until one returns data.
+#
+# Every public futures API is blocked from *somewhere*, and the blocks point in
+# opposite directions, so no single source works everywhere. Measured
+# 2026-07-26 from a US home connection and from a GitHub Actions runner:
+#
+#     exchange   home     CI
+#     binance    200      451   regulatory geo-block on datacenter ranges
+#     bybit      200      403   CloudFront country block
+#     okx        timeout  200   unreachable from the US residential IP
+#     kraken     timeout  200   same
+#     gate       200      200
+#
+# Order is deepest-market-first, then the one that answers in both places.
+# Binance carries the most liquidity so it wins where it is reachable; Gate is
+# the tier that keeps the scheduled scan working. Re-probe with
+# `.github/workflows/probe-exchanges.yml` before reordering this — the answer is
+# a property of the network, not of the code, and it changes without notice.
+#
+# Each entry needs `supports(asset)`, `fetch_all(asset, cache)` and `SOURCE`.
+FUTURES_CHAIN = (binance_futures, gate_futures, bybit_futures)
 
 
 class TriggerKind(str):
@@ -249,7 +272,6 @@ def refresh_context(
     """
     from alpha_engine.analyzers.sentiment import score_news
     from alpha_engine.ingestion import (
-        binance_futures,
         calendar_file,
         coingecko,
         finnhub_news,
@@ -264,25 +286,46 @@ def refresh_context(
     if force:
         wanted = {"news", "onchain", "fundamentals", "events"}
 
-    def run(kind: str, fetch: Callable[[], int], enabled: bool = True) -> None:
+    def run(kind: str, fetch: Callable[[], int | dict[str, int]], enabled: bool = True) -> None:
         """Run one source's refresh, isolate its failure, and record its health.
 
         The health record is the part that matters over months. Every adapter
         here degrades to empty rather than raising, so without this a source
         that broke in March looks identical to a quiet Tuesday until someone
         notices the signals got worse. `items` is what separates them.
+
+        A fetcher may return a plain count, or a `{feed: count}` map when the
+        kind has several independent feeds. **Return the map whenever it can.**
+        An aggregate hides a dead feed behind a live one, and that is not a
+        hypothetical: `onchain` recorded a single total, so when Binance began
+        answering HTTP 451 to every request from CI, CoinGecko's one dominance
+        reading kept the total at "1 item, ok" and six dead fetches stayed
+        invisible for a month of green builds.
+
+        Only feeds that were actually *attempted* appear in the map. A feed that
+        was never tried must not be recorded, or an unused fallback would age
+        into a false "degraded" alarm and teach you to ignore the health table.
         """
         if kind not in wanted or not enabled:
             report.skipped_fresh.append(kind)
             return
         try:
-            count = fetch()
-            report.refreshed.append(kind)
-            report.item_counts[kind] = count
-            health.record(kind, items=count)
+            result = fetch()
         except Exception as e:  # noqa: BLE001 - one dead source is not a failed run
             report.failed[kind] = str(e)
             health.record(kind, error=f"{type(e).__name__}: {e}")
+            return
+
+        report.refreshed.append(kind)
+        if isinstance(result, dict):
+            for feed, count in sorted(result.items()):
+                report.item_counts[f"{kind}.{feed}"] = count
+                health.record(f"{kind}.{feed}", items=count)
+            total = sum(result.values())
+        else:
+            total = result
+        report.item_counts[kind] = total
+        health.record(kind, items=total)
 
     def _news() -> int:
         fetched = rss.fetch_all(cache=cache)
@@ -312,19 +355,56 @@ def refresh_context(
         manual = calendar_file.load_calendar(cache=cache)
         return len(fomc) + len(manual)
 
-    def _onchain() -> int:
-        count = 0
-        for asset in assets:
-            if binance_futures.supports(asset):
-                count += len(binance_futures.fetch_all(asset, cache=cache))
-                if glassnode.has_key():
-                    count += len(glassnode.fetch_all(asset, cache=cache))
-        if coingecko.fetch_btc_dominance(cache=cache) is not None:
-            count += 1
-        return count
+    def _onchain() -> dict[str, int]:
+        """Per-feed counts, because the aggregate is what hid the CI outage.
 
-    def _fundamentals() -> int:
-        return sum(len(fmp.fetch_fundamentals(a, cache=cache)) for a in assets)
+        Futures positioning comes from the first adapter in FUTURES_CHAIN that
+        actually answers. A chain rather than a single fallback because the
+        blocks point in opposite directions — measured 2026-07-26, Binance and
+        Bybit answer from a home connection but not from a GitHub runner, while
+        OKX and Kraken answer from the runner but not from the home connection.
+        Any single second choice fixes one environment and breaks the other.
+        Gate.io answers in both, which is why it sits where it does.
+
+        The choice *latches*. A geo-block is a property of the host, not of the
+        symbol: once an adapter has returned nothing for one asset it will for
+        all of them, so re-probing per asset spends a doomed request per asset
+        per run to relearn the same fact.
+        """
+        counts: dict[str, int] = {}
+        chain = list(FUTURES_CHAIN)
+        futures_source = None  # latched once one adapter answers
+
+        for asset in assets:
+            if glassnode.has_key():
+                counts["glassnode"] = counts.get("glassnode", 0) + len(
+                    glassnode.fetch_all(asset, cache=cache)
+                )
+
+            if futures_source is not None:
+                if futures_source.supports(asset):
+                    counts[futures_source.SOURCE] = counts.get(futures_source.SOURCE, 0) + len(
+                        futures_source.fetch_all(asset, cache=cache)
+                    )
+                continue
+
+            # Nothing chosen yet: walk the chain until something returns data.
+            for adapter in chain:
+                if not adapter.supports(asset):
+                    continue
+                fetched = len(adapter.fetch_all(asset, cache=cache))
+                counts[adapter.SOURCE] = counts.get(adapter.SOURCE, 0) + fetched
+                if fetched:
+                    futures_source = adapter
+                    break
+
+        counts["coingecko_dominance"] = (
+            1 if coingecko.fetch_btc_dominance(cache=cache) is not None else 0
+        )
+        return counts
+
+    def _fundamentals() -> dict[str, int]:
+        return {"fmp": sum(len(fmp.fetch_fundamentals(a, cache=cache)) for a in assets)}
 
     run("news", _news)
     run("events", _events)

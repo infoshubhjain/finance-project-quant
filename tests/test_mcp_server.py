@@ -17,7 +17,7 @@ from __future__ import annotations
 import io
 import json
 
-import mcp_server
+from alpha_engine import mcp as mcp_server
 
 
 def _rpc(method: str, params: dict | None = None, msg_id: int | None = 1) -> dict:

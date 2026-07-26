@@ -24,7 +24,9 @@ VENV_DIR="$SCRIPT_DIR/.venv"
 # scripts/daily.sh already does this; start.sh needs it for the same reason.
 cd "$SCRIPT_DIR"
 
-# web/ is not an installed package, but the dashboard command imports it.
+# The web app and the MCP server now ship inside the installed package, so no
+# PYTHONPATH hack is needed to reach them. Kept on the path anyway so a strategy
+# file at the repo root can import project-local helpers.
 export PYTHONPATH="${SCRIPT_DIR}:${PYTHONPATH:-}"
 
 # Colors, but only when writing to a real terminal (so piping to a file or CI
@@ -433,7 +435,7 @@ PY
     mcp)
         # Used by AI assistants, which speak JSON-RPC on stdin/stdout. Nothing
         # may be printed to stdout here or the protocol stream is corrupted.
-        exec python "$SCRIPT_DIR/mcp_server.py"
+        exec python -m alpha_engine.mcp
         ;;
     *)
         run_cli "$@"

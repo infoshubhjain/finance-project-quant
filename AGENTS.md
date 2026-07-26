@@ -29,7 +29,9 @@ pip install -e ".[dev]"
 # Before any change is "done" (all three):
 pytest -q                                  # all tests pass; suite is network-free
 ruff check . && ruff format --check .      # CI gates BOTH lint and format
-python -m alpha_engine.cli.main scan BTC   # manual end-to-end check
+python -m alpha_engine.cli.main scan BTC --no-record   # manual end-to-end check
+#   --no-record matters: the signal log is a track record, and a developer
+#   verifying a build should not append test scans to it.
 
 # Single test
 pytest tests/test_core.py::test_name -q
@@ -55,12 +57,29 @@ CLI commands (also available as `alpha-engine <cmd>`):
 | `trade <ASSET>` / `webhook` | paper-first execution, `LIVE_TRADING`-gated |
 | `scan-chain` / `fetch-chain` | Indian F&O options chains |
 | `health` | per-source status; `--strict` exits non-zero when degraded |
-| `dashboard` | read-only web UI |
+| `dashboard` | web app: dashboard + AI terminal + HTTP/MCP API |
+| `strategies` | list user strategies available to `strategy-backtest` |
+| `strategy-backtest <ASSET> --strategy <Name>` | trade-level backtest: equity curve, trades, Sharpe |
+| `terminal [question]` | AI research chat, bring your own LLM key |
 
 Plus `python mcp_server.py` (or `./start.sh mcp`) — the MCP server for AI assistants.
 
+### The three outside surfaces
+
+`scan` etc. are also reachable without the CLI. All three dispatch into the SAME
+table — `src/alpha_engine/toolkit.py` — so they cannot drift:
+
+| Surface | Entry point | Use |
+|---|---|---|
+| MCP over stdio | `mcp_server.py` | Claude Desktop, Cursor, Windsurf |
+| MCP over HTTP | `POST /api/v1/mcp` | remote MCP clients |
+| REST | `GET/POST /api/v1/tools/<name>` | anything else; `GET /api/v1/tools` self-describes |
+
+**A new tool goes in `toolkit.py` and appears on all three at once.** Adding one
+to `mcp_server.py` is a bug — that file is transport only.
+
 CI (`.github/workflows/ci.yml`) tests on Python 3.11–3.13; coverage reported, not gated.
-39 test files, ~2200 tests, all network-free, ~20s.
+45 test files, ~2330 tests, all network-free, ~30s.
 
 ## Architecture
 
@@ -79,10 +98,42 @@ ingestion/ -> cache/ -> analyzers/ -> synthesis/ -> narrative/ -> Signal -> vali
 - `validation/recorder.py` is append-only (`data/signals/signals.jsonl`) — no code path
   may rewrite old lines. `validation/backtest.py` uses `signal_at` as the sole
   no-lookahead truncation choke point; a test pins byte-identical output.
-- `web/` (dashboard) and `mcp_server.py` are read-only and live **outside** the installed
-  package; the CLI reaches `web/` via PYTHONPATH (see `start.sh`). Don't move them into
-  `src/` casually.
+- `web/` (server) and `mcp.py` are read-only transports. They now live **inside** the
+  package at `src/alpha_engine/web/` and `src/alpha_engine/mcp.py`, so `pip install
+  alpha-engine` ships the dashboard, terminal, HTTP API and MCP server. Root
+  `mcp_server.py` is a three-line shim kept only because MCP client configs point at a
+  file path. The frontend is declared as package data in `pyproject.toml`; forget that
+  and the wheel ships a web server with no pages.
 - `portfolio.json` at the repo root configures `scan-all` / `batch` / `orchestrate`.
+
+Two directories sit *beside* the pipeline rather than in it:
+
+- `quant/` — the 504-factor registry, IC ranking, Black-Scholes.
+- `strategy/` — user-authored trading rules and the trade-level backtester. Ported
+  from the standalone `nifty_backtester` Streamlit app, rewritten pure-Python over
+  `Candle` so the repo keeps its single runtime dependency.
+
+### `validation/` vs `strategy/` — two different questions
+
+They look similar and answer opposite things. Putting a change in the wrong one is
+the most likely mistake here.
+
+| | `validation/backtest.py` | `strategy/engine.py` |
+|---|---|---|
+| Question | were the ENGINE's signals directionally right? | what would MY rule's account have done? |
+| Signals from | the analyzer pipeline (fixed) | a user's `BaseStrategy` subclass |
+| Output | hit rate, captured move, calibration curve | trades, equity curve, Sharpe, max drawdown |
+| No-lookahead | structural — `signal_at()` truncates before any analysis | detected, not enforced — see below |
+
+The asymmetry is unavoidable: `signal_at` owns signal generation so it can truncate,
+but a user strategy is handed the whole series and could read `candles[i+1]`. So
+`run_strategy_backtest(check_lookahead=True)` re-runs the strategy on truncated
+history and reports bars whose signal changed. **A non-empty `lookahead_violations`
+voids every metric in that report** — the CLI and the tools both lead with it for
+that reason. Never present those numbers without it.
+
+The position is also lagged one bar on purpose: a signal from bar `t`'s close fills
+at `t+1`. `tests/test_strategy.py` pins both properties; keep them.
 
 ### Two layers that only ever reduce confidence
 
@@ -122,15 +173,40 @@ from ~23s to ~70s — that is the symptom.
 - **New factor** → one `_add(...)` line in `quant/factors.py`. It then appears in `factors`
   output, gets IC-scored, and is covered by the registry-wide lookahead test automatically.
   Factors take `(Bars, t)` and may read only indices `[0..t]`.
-- **New MCP tool** → add to `TOOLS` and `HANDLERS` in `mcp_server.py`. Four non-negotiables:
-  disclaimer on every payload, cache-first (`no_refresh=True`), read-only by default, and
-  never accept an input that becomes a decision-bearing number.
+- **New tool (MCP + HTTP + AI terminal)** → add to `TOOLS` and `HANDLERS` in
+  `src/alpha_engine/toolkit.py`, never in `mcp_server.py`. Five non-negotiables:
+  disclaimer on every payload, cache-first (`no_refresh=True`), read-only by default,
+  never accept an input that becomes a decision-bearing number, and **never accept
+  code**. If the tool can change state on disk, name its write arguments in
+  `WRITE_ARGS` so `read_only_tools()` can hide them from the AI terminal and the HTTP
+  write gate can refuse them.
+- **New strategy** → a `BaseStrategy` subclass in `strategies/` (or
+  `$ALPHA_STRATEGY_DIR`). Implement `generate_signals(candles) -> list[int]` returning
+  one 1/-1/0 per bar; optionally override `verify_on_option`. Use the aligned helpers
+  in `strategy/indicators.py` rather than hand-rolling offsets — that is where
+  lookahead comes from. It is discovered automatically; no registration.
+- **New LLM provider** → one entry in `PROVIDERS` in `narrative/providers.py`. If it is
+  OpenAI-compatible (most gateways are) that is the whole change; a genuinely new
+  dialect needs a branch in `chat()`, `_parse()` and `tools_for()`.
 - **Style**: type hints, `from __future__ import annotations`, Pydantic for data shapes,
   ruff line length 100, docstrings that explain *why*.
 
-## External libraries
+## Security boundaries
 
-- **Pretext** (`@chenglou/pretext`): JS text measurement without DOM reflow. Docs at `docs/pretext.md`. Package at `~/Desktop/Projects/pretext/package/`. Use for the web dashboard text layout.
+The HTTP API is the first surface a stranger can reach. Four rules, all enforced in
+code and pinned by `tests/test_api.py`:
+
+- **No route accepts strategy source.** Loading a strategy executes Python; over a
+  network that is remote code execution. A caller may select and parameterise a
+  strategy already on disk, nothing more. Doing it properly needs the sandbox in
+  FUTURE_WORK Phase A2, which belongs in the platform repo.
+- **Binding off-loopback without `ALPHA_API_KEY` is refused, not warned about.** A
+  warning printed to a terminal nobody is watching is not a security control.
+- **Writes are off by default** (`--allow-writes` opts in), and the gate applies to
+  the MCP-over-HTTP transport too — it must not be bypassable by changing protocol.
+- **BYO keys are never stored.** The terminal's API key arrives in the request body,
+  goes to the provider, and is dropped. There is no key store; `web/server.py`'s
+  access log is silenced for this reason and must stay that way.
 
 ## Gotchas
 
@@ -188,3 +264,60 @@ from ~23s to ~70s — that is the symptom.
   the store and prints the fix. Never "solve" this by disabling verification.
 - `mcp_server.py` must print **nothing** to stdout except JSON-RPC. Diagnostics go to
   stderr or the protocol stream is corrupted.
+- **`ruff>=0.4` is not a pin — the rule set is.** CI installs the newest ruff, so when
+  0.16 widened its defaults, 62 findings appeared across untouched files and CI went red
+  for three runs with no commit responsible. `[tool.ruff.lint] select` in `pyproject.toml`
+  now names the rules explicitly. Widening it is deliberate, separate work: turn on one
+  family, fix what it finds, commit. Never widen it inside a feature branch.
+- **`ruff format` also formats python inside markdown.** `HOW_IT_WORKS.md` and
+  `docs/analyzer-guide.md` align their comment columns by hand because they are teaching
+  material; `[tool.ruff.format] exclude = ["*.md"]` keeps that. Don't remove it and then
+  "fix" the docs.
+- **A `strategy_backtest` with `lookahead_violations` is not a weak result, it is a void
+  one.** The CLI prints it to stderr before the metrics and the tool payload attaches a
+  `warning` — because a reader who sees Sharpe 3.1 first has already been misled. Keep
+  the ordering.
+- **`Interval` drives annualisation** (`strategy/metrics.py::bars_per_year_for`). Sharpe
+  on minute bars annualised with 252 is wrong by roughly 9x, and flatteringly so. If you
+  add an interval, add its constant.
+- **`ema_series` returns a trimmed list; `strategy/indicators.py` returns an aligned one.**
+  Both are correct for their callers. Strategy code wants `fast[i]` to mean bar `i`, so it
+  uses the aligned wrappers — mixing them up is an off-by-warmup lookahead bug that looks
+  like alpha.
+- **No single futures exchange is reachable from everywhere, and the blocks point in
+  opposite directions.** Measured 2026-07-26: Binance answers 451 and Bybit 403 from a
+  GitHub runner but 200 from a home connection; OKX and Kraken answer 200 from the runner
+  and time out from a US residential IP. `orchestrator/engine.py::FUTURES_CHAIN` therefore
+  walks adapters until one answers and latches the winner. Re-run
+  `.github/workflows/probe-exchanges.yml` before reordering it — reachability is a property
+  of the network, not of the code, and it changes without announcement.
+- **Record health per FEED, never per kind.** This is restated because it already cost a
+  month: `onchain` recorded one aggregate, so when Binance began refusing every request
+  CoinGecko's single dominance reading kept it at "1 item, ok" and six dead fetches were
+  invisible across a month of green builds. `run()` in the orchestrator takes a
+  `{feed: count}` map for exactly this reason, and only records feeds that were *attempted*
+  (an untried fallback would age into a false alarm).
+- **Cache freshness must come from the FETCH time, not from the data's own dates.**
+  `get_macro` compared the newest observation's date against a 1-day TTL. FRED's monthly
+  series are always weeks old by construction, so every series was permanently stale and a
+  four-equity batch made twelve FRED calls instead of three — forever, silently.
+  `LocalStore.macro_fetched_at` reads the file mtime instead.
+- **Two adapters for one metric will not share a unit.** Binance reports open interest in
+  base coin, Gate in contracts (1 contract = 0.0001 BTC), and OKX in USD. The analyzer
+  reads OI as `last / first`, so a series holding two units has a ~100,000x step that
+  scores as a colossal build-up. `crypto_onchain._by_metric` reads only the freshest
+  source per metric; that guard holds for adapters nobody has written yet, whereas a
+  cross-adapter unit convention does not survive the third venue.
+- **Validate numeric tool arguments at `toolkit.call_tool`, not per handler.** `step=-5`
+  used to return HTTP 200 with a backtest reporting zero signals, because
+  `range(warmup, n, -5)` is empty rather than an error — a confidently wrong number, which
+  is worse here than a failure. `_BOUNDS` is checked once so all three transports inherit
+  it.
+- **The daily data commit carries `[skip ci]`, which suppresses every workflow on that
+  commit.** That is intended on `main` (a data commit should not re-run the suite), but it
+  means a branch whose HEAD is a data commit shows *no* CI checks at all — including on a
+  pull request. Push a real commit to get a run.
+- **Frontend files are package data, not code.** `src/alpha_engine/web/static/` only ends
+  up in a wheel because `[tool.setuptools.package-data]` names it. A new asset directory
+  needs a new entry there, and the failure mode is a server that starts fine and 404s
+  every page — which no test catches unless it installs the wheel.

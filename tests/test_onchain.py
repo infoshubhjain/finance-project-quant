@@ -155,17 +155,32 @@ def test_funding_rate_parses_rows(monkeypatch, tmp_path):
     assert obs[1].value == pytest.approx(0.0002)
 
 
-def test_open_interest_parses_rows(monkeypatch, tmp_path):
+def test_open_interest_reads_contracts_not_usd_notional(monkeypatch, tmp_path):
+    """The UNIT is the contract here, not an implementation detail.
+
+    Binance returns both `sumOpenInterest` (base coin) and `sumOpenInterestValue`
+    (USD). Bybit — the fallback used whenever Binance geo-blocks the host, which
+    is every CI run — only publishes base coin. If this ever reads the USD field
+    again, a series that switches source mid-window gains a ~100,000x step that
+    `crypto_onchain` scores as an enormous open-interest build-up.
+    """
+
     class FakeResp:
         status_code = 200
 
         def json(self):
-            return [{"timestamp": 1717200000000, "sumOpenInterestValue": "1234567.89"}]
+            return [
+                {
+                    "timestamp": 1717200000000,
+                    "sumOpenInterest": "42.5",
+                    "sumOpenInterestValue": "1234567.89",
+                }
+            ]
 
     monkeypatch.setattr(binance_futures.net, "get", lambda *a, **kw: FakeResp())
     obs = binance_futures.fetch_open_interest("BTC", cache=Cache(LocalStore(tmp_path)))
     assert len(obs) == 1
-    assert obs[0].value == pytest.approx(1234567.89)
+    assert obs[0].value == pytest.approx(42.5)
 
 
 def test_malformed_rows_are_skipped_not_fatal(monkeypatch, tmp_path):

@@ -96,10 +96,16 @@ def fetch_funding_rate(
 def fetch_open_interest(
     asset: str, period: str = "1d", limit: int = 60, cache: Cache | None = None
 ) -> list[OnChainObservation]:
-    """Historical open interest, in USD notional.
+    """Historical open interest, in BASE COIN (contracts).
 
     Note the endpoint lives under /futures/data (not /fapi/v1) and only retains
     about 30 days of history regardless of `limit` — Binance's rule, not ours.
+
+    The response carries both `sumOpenInterest` (contracts) and
+    `sumOpenInterestValue` (USD notional). This reads the contract count so the
+    unit matches `bybit_futures`, which is the fallback when Binance geo-blocks
+    this host. A metric whose unit depends on which adapter happened to answer
+    is a metric that reports a fabricated 100,000x build-up at the switchover.
     """
     asset = asset.upper()
     symbol = _SYMBOLS.get(asset)
@@ -121,7 +127,7 @@ def fetch_open_interest(
                 OnChainObservation(
                     metric=f"open_interest_{asset}",
                     ts=datetime.fromtimestamp(int(row["timestamp"]) / 1000, tz=timezone.utc),
-                    value=float(row["sumOpenInterestValue"]),
+                    value=float(row["sumOpenInterest"]),
                     source=SOURCE,
                 )
             )

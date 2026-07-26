@@ -9,6 +9,8 @@ Key properties:
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import datetime, timedelta, timezone
 
 from alpha_engine.cache.interface import Cache, LocalStore, is_stale
@@ -194,3 +196,56 @@ def test_stale_price_detected_after_ttl(tmp_path):
     cache.put_price(_price_series(fetched_at=old_time))
     _, stale = cache.get_price("BTC", "1d")
     assert stale is True
+
+
+# --- macro freshness --------------------------------------------------------
+#
+# These pin a bug that made the macro cache useless without ever erroring:
+# staleness was computed from the newest OBSERVATION's date rather than from
+# when the series was fetched. FRED's monthly series are always weeks old by
+# construction (CPI for June publishes in July and stays current all month), so
+# a 1-day TTL judged every series permanently stale and every equity scan
+# refetched all three — twelve FRED calls per four-asset batch instead of three.
+
+
+def test_macro_written_now_is_not_stale(tmp_path):
+    """The regression itself: a file written this second must not be stale
+    merely because monthly data is dated last month."""
+    store = LocalStore(tmp_path)
+    cache = Cache(store)
+    forty_five_days_ago = datetime.now(timezone.utc) - timedelta(days=45)
+    store.write_macro(
+        [MacroObservation(series_id="CPIAUCSL", ts=forty_five_days_ago, value=310.0, source="fred")]
+    )
+
+    obs, stale = cache.get_macro("CPIAUCSL")
+    assert obs and stale is False
+
+
+def test_macro_goes_stale_once_the_ttl_passes(tmp_path):
+    """The other half — the fix must not make macro permanently fresh."""
+    store = LocalStore(tmp_path)
+    cache = Cache(store)
+    store.write_macro(
+        [
+            MacroObservation(
+                series_id="UNRATE", ts=datetime.now(timezone.utc), value=4.1, source="fred"
+            )
+        ]
+    )
+
+    path = tmp_path / "macro" / "UNRATE.json"
+    two_days_ago = time.time() - 2 * 86400
+    os.utime(path, (two_days_ago, two_days_ago))
+
+    _obs, stale = cache.get_macro("UNRATE")
+    assert stale is True
+
+
+def test_missing_macro_series_is_stale(tmp_path):
+    obs, stale = Cache(LocalStore(tmp_path)).get_macro("NOPE")
+    assert obs == [] and stale is True
+
+
+def test_macro_fetched_at_is_none_for_a_series_never_written(tmp_path):
+    assert LocalStore(tmp_path).macro_fetched_at("NOPE") is None

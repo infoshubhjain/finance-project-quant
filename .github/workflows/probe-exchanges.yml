@@ -1,14 +1,30 @@
-# TEMPORARY diagnostic. Delete once a working funding/open-interest source is
-# chosen.
+# Which public market-data APIs can this runner actually reach?
 #
-# Binance answers 451 and Bybit answers 403 from GitHub's IP ranges, while both
-# answer 200 from a home connection. Guessing the next exchange would repeat the
-# mistake, so this asks the runner itself which public futures APIs it can
-# actually reach.
+# Keep this. `orchestrator/engine.py::FUTURES_CHAIN` is ordered from its output
+# and its comment tells you to re-run this before reordering — reachability is a
+# property of the network, not of the code, and it changes without notice or
+# announcement.
+#
+# It exists because a guess cost a day. Binance answers HTTP 451 from GitHub's
+# IP ranges (regulatory geo-block) and 200 from a home connection; the obvious
+# fallback, Bybit, answers 403 there (CloudFront country block) and 200 at home.
+# Replacing one blocked source with another blocked source looked like a fix and
+# shipped a still-broken scraper. Asking the runner is the only honest way to
+# know, and it takes eleven seconds.
+#
+# Run: gh workflow run probe-exchanges.yml
+# Read the two-column result as "home vs CI" and pick a tier that answers in
+# both, or chain tiers until the pair is covered.
+#
+# Manual dispatch only, no secrets, read-only GETs — it cannot affect the
+# signal log or cost anything.
 name: probe-exchanges
 
 on:
   workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
   probe:

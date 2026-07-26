@@ -390,7 +390,7 @@ function renderFeedRows() {
         <td class="num muted">${inv}</td>
         <td><div class="source-list">${sources}</div></td>
         <td class="muted nowrap">${fmtDate(r.recorded_at)}</td>
-        <td><pre class="thesis">${esc(r.thesis)}</pre></td>
+        <td><pre class="thesis" title="${esc(r.thesis)}">${esc(r.thesis)}</pre></td>
       </tr>`;
     })
     .join("");
@@ -515,13 +515,14 @@ async function refresh() {
   }
 }
 
-// ---- theme toggle --------------------------------------------------------
+// ---- theme -----------------------------------------------------------------
+// theme-toggle.js owns the button and the stored preference. This page only
+// needs to know the theme changed, because the charts are inline SVG whose
+// fills are read from CSS custom properties at draw time — they do not restyle
+// themselves and have to be redrawn.
 
-$("theme-btn").addEventListener("click", () => {
-  const next = document.documentElement.dataset.theme === "light" ? "dark" : "light";
-  document.documentElement.dataset.theme = next;
-  try { localStorage.setItem("ae-theme", next); } catch (e) { /* ignore */ }
-  if (lastPayload) render(lastPayload); // re-render so SVG fills pick up new theme vars
+document.addEventListener("themechange", () => {
+  if (lastPayload) render(lastPayload);
 });
 
 $("refresh-btn").addEventListener("click", refresh);
