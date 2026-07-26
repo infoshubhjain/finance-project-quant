@@ -282,9 +282,16 @@ th.sortable::after { content: "↕"; opacity: .35; margin-left: 5px; font-size: 
 th.sort-asc::after { content: "↑"; opacity: .9; }
 th.sort-desc::after { content: "↓"; opacity: .9; }
 
+/* The thesis is a full paragraph, and the feed shows one per row.
+   Unclamped it rendered rows 1,571px tall — one signal per screenful and a
+   13,000px page, which is not a table anyone can read. Clamped to four lines;
+   the row carries the full text as a native tooltip, and clicking the row opens
+   that asset's history. */
 pre.thesis {
   margin: 0; white-space: pre-wrap; word-break: break-word;
   color: var(--text-2); font: 12.5px/1.55 var(--mono); max-width: 380px;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4;
+  line-clamp: 4; overflow: hidden;
 }
 
 /* source tags */
@@ -393,6 +400,18 @@ footer {
   .card.reveal { opacity: 1; transform: none; }
 }
 
+/* ---- print --------------------------------------------------------------- */
+/* `.card.reveal` starts at opacity 0 and is un-hidden by an IntersectionObserver
+   as you scroll. That is fine on screen and wrong on paper: printing or saving
+   to PDF never scrolls, so every card below the fold comes out blank. Same
+   reason a full-page screenshot of this dashboard was mostly empty. */
+@media print {
+  .card.reveal { opacity: 1 !important; transform: none !important; }
+  .bg-wash, .icon-btn, .term-composer, .term-setup { display: none; }
+  .card { break-inside: avoid; box-shadow: none; }
+  pre.thesis { -webkit-line-clamp: unset; line-clamp: unset; max-height: none; }
+}
+
 /* ============================================================================
    LANDING (/) — the two doors
    Reuses every token above; adds no new colours. The two cards are deliberately
@@ -440,10 +459,14 @@ footer {
 
 .landing-api { margin-top: 18px; }
 .landing-api-lede { color: var(--text-2); font-size: 13.5px; line-height: 1.6; margin: 10px 0 14px; }
+/* max-width belongs on the TEXT, not on the bordered box: putting it on the
+   box made the rule stop two-thirds of the way across and read as a mistake. */
 .landing-foot {
   margin-top: 30px; padding-top: 20px; border-top: 1px solid var(--line);
-  font-size: 12px; line-height: 1.65; color: var(--muted); max-width: 78ch;
+  font-size: 12px; line-height: 1.65; color: var(--muted);
 }
+.landing-foot > * { max-width: 78ch; }
+.landing-foot p { margin: 0; }
 .landing-foot strong { color: var(--text-2); }
 
 pre.code-block {
@@ -627,6 +650,17 @@ pre.code-block code { font: inherit; background: none; padding: 0; }
 .term-send svg { width: 18px; height: 18px; }
 .term-send.is-busy svg { animation: term-pulse 1s infinite var(--ease); }
 
+/* The keyboard hint lived inside the placeholder, where it made the string two
+   lines long and got clipped mid-word on a 390px screen — and Shift+Enter means
+   nothing on a phone keyboard anyway. Out of the input, and hidden where it
+   does not apply. */
+.term-hint {
+  margin: 0; padding: 8px 16px 0;
+  font: 11px var(--mono); color: var(--faint); text-align: right;
+  background: var(--surface-2);
+}
+@media (max-width: 820px) { .term-hint { display: none; } }
+
 .term-disclaimer {
   margin: 0; padding: 10px 16px 14px;
   font-size: 11px; line-height: 1.55; color: var(--faint);
@@ -637,4 +671,7 @@ pre.code-block code { font: inherit; background: none; padding: 0; }
   .door-grid { grid-template-columns: 1fr; }
   .term-setup-row { grid-template-columns: 1fr; }
   .term-log { padding: 18px 16px; }
+  /* The placeholder wraps to two lines in a narrow input; a 42px box clipped it
+     mid-word. Size the empty state to what it actually has to show. */
+  .term-composer textarea { min-height: 64px; }
 }

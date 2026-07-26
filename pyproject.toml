@@ -39,6 +39,14 @@ dev = [
     "pytest-cov>=5.0",
     "ruff>=0.4",
 ]
+# Browser-rendering tests. Deliberately NOT in `dev`: it pulls a ~150 MB browser
+# and turns a millisecond suite into a multi-second one, and the rest of the
+# tests are fast and network-free so they can run on every save. Install this
+# before shipping a frontend change:
+#     pip install -e ".[browser]" && playwright install chromium
+browser = [
+    "playwright>=1.40",
+]
 
 [project.scripts]
 alpha-engine = "alpha_engine.cli.main:main"

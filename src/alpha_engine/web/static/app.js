@@ -390,7 +390,7 @@ function renderFeedRows() {
         <td class="num muted">${inv}</td>
         <td><div class="source-list">${sources}</div></td>
         <td class="muted nowrap">${fmtDate(r.recorded_at)}</td>
-        <td><pre class="thesis">${esc(r.thesis)}</pre></td>
+        <td><pre class="thesis" title="${esc(r.thesis)}">${esc(r.thesis)}</pre></td>
       </tr>`;
     })
     .join("");
