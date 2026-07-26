@@ -3,6 +3,13 @@
 Every claim below was verified by running something. Where a finding is
 unverified, it says so.
 
+> **Revision 2.** The first pass of this audit was incomplete and said so only
+> in passing. It covered 8 of 12 phases: it never ran the frontend, never made a
+> single call through the AI terminal, and skipped the frontend performance
+> phase entirely — while the code it was auditing had been described as
+> "shipped". Both sections returned HTTP 200 and that was treated as working.
+> Revision 2 adds the missing phases, and §9 records what each one found.
+
 Scope: the whole repository at `fix/scraper-and-product-surfaces`, including the
 scheduled Action, the new strategy layer, the HTTP/MCP API, and the two-section
 web app.
@@ -40,12 +47,18 @@ to be one.** See §8.
 
 ### Top risks now
 
-1. **`data/signals/signals.jsonl` has no backup path.** It is the compounding
-   asset, explicitly not regenerable, and it lives in exactly one place.
-2. **Yahoo Finance returned `429` to the runner during the probe.** Equity prices
-   have no fallback source, unlike crypto's three-tier chain.
+1. **Equity prices still have exactly one source.** Yahoo answers `429` when it
+   throttles, and there is no keyless alternative to fail over to — every
+   candidate checked (Stooq on both domains) now serves a JavaScript
+   proof-of-work challenge at HTTP 200. Mitigated with retry-and-backoff plus a
+   per-source health record, which survives a throttle but not an outage.
+2. **No browser has rendered these pages.** Structure, wiring, contracts and XSS
+   safety are all tested; visual layout is not. A CSS mistake passes everything.
 3. **The engine has no measured edge, and the docs are honest about it.** The
    risk is a reader who skips that. Every surface carries the disclaimer.
+
+*(Revision 1 listed the signal log's missing backup and the whole-log re-parse
+here. Both are fixed — see §2.)*
 
 ---
 
@@ -66,6 +79,13 @@ to be one.** See §8.
 | **MED** | `.github/workflows/` | `daily.json` generated every run and discarded | Committed |
 | **LOW** | `cli/main.py` | Dashboard ImportError advised `python -m web.server`, which cannot work if the import failed | Accurate message |
 | **LOW** | `CLAUDE.md`, `AGENTS.md` | Documented verification step `scan BTC` writes to the track record | `--no-record` |
+| **HIGH** | `ingestion/yahoo.py` | Used bare `net.get` while `net.get_with_retry` (honouring `Retry-After`) already existed for exactly this; a 429 failed every equity in the batch | Retry + per-source health |
+| **HIGH** | *(no file)* | Price had **no health record at all** — the most important input was the least observable | `price.yahoo` recorded |
+| **HIGH** | `.github/workflows/` | The commit step is the log's only backup *and* the thing most able to destroy it; a truncating bug would be pushed | `scripts/verify_signal_log.py` refuses a shrunken or invalid log |
+| **HIGH** | packaging | `pip install` shipped the CLI but not the dashboard, terminal, API or MCP server | `web/` and `mcp.py` moved into the package; static declared as package data |
+| **MED** | `validation/recorder.py` | Whole log re-parsed through pydantic per HTTP request | Memoised on `(mtime, size)` |
+| **MED** | `.github/workflows/` | A red build was the only alarm, and nobody watches a red build | Opens/updates a GitHub issue naming the dead source |
+| **MED** | `narrative/providers.py` | Local models (Ollama, LM Studio) were unusable — the only config needing no key and sending no data out | `local` provider + `LLM_API_BASE` |
 
 ---
 
@@ -124,10 +144,11 @@ Measured on 91 cached BTC bars.
 
 **Bottlenecks that will appear later, in order:**
 
-1. **`signals.jsonl` is read whole, parsed whole, on every dashboard load.** 73
-   records / 148 KB today. At ~7 signals/day it is ~2.5 MB and 18k records in a
-   year. The retention logic that protects the *caches* does not apply here,
-   correctly — but the dashboard will need pagination or an index before then.
+1. ~~`signals.jsonl` is read whole on every dashboard load.~~ **Fixed.** The
+   parse is memoised on the file's `(mtime, size)`, which is exactly correct
+   rather than a heuristic because the log is append-only. Measured on a
+   simulated year — 18,000 records, 6.7 MB — a warm read went from 66 ms to
+   0.05 ms. Outcome scoring is deliberately *not* cached: it reads live prices.
 2. **`factors` on a long history with `cost="slow"` factors** (GARCH/HMM) goes
    from ~4 s to minutes. Already documented and excluded from the default panel.
 3. **The HTTP server is synchronous per request.** `ThreadingHTTPServer` handles
@@ -207,3 +228,96 @@ The one caveat worth stating plainly: **the analyzers have no demonstrated
 edge.** The repo says so repeatedly and the backtester exists to keep saying so.
 That is a research finding, not a defect — but it is the thing to remember
 before any of this touches money.
+
+
+---
+
+## 9. Phases the first pass missed
+
+Recorded because an audit that quietly skips a phase is worse than no audit —
+it produces a scorecard that reads as coverage.
+
+### Phase 1 / 6 — architecture and data layer
+
+| Question | Answer |
+|---|---|
+| Languages | Python 3.10+ (engine), vanilla JS/CSS (frontend, no build step) |
+| Runtime deps | **one** — pydantic. Everything else is stdlib, on purpose. |
+| Entry points | `alpha-engine` console script, `python -m alpha_engine.web.server`, `python -m alpha_engine.mcp`, root `mcp_server.py` shim |
+| **Database** | **None.** Persistence is JSON files under `data/`, plus one append-only JSONL log. This is why the SQL/NoSQL injection classes do not exist, and why §7 scores Scalability 5. |
+| Schema / migrations | `schema/signal.py` + `SCHEMA_VERSION`. No migration tooling — a field change means updating every consumer by hand. |
+| Auth | Optional bearer key (`ALPHA_API_KEY`) on the HTTP API. No user accounts, by design. |
+| Deployment | Docker (multi-stage, non-root) or a clone. GitHub Actions runs the daily scan. |
+
+### Phase 5 — per-endpoint review
+
+Every route dispatches into `toolkit.call_tool`, so validation, bounds, the
+disclaimer and the write gate are inherited rather than re-implemented per
+endpoint. That is the design property that makes this table short.
+
+| Endpoint | Validation | Authz | Rate limit | Notes |
+|---|---|---|---|---|
+| `GET /api/dashboard` | n/a | — | — | read-only; payload contract pinned by an E2E test |
+| `GET /api/asset/<sym>` | regex on symbol | — | — | 400 on anything else |
+| `GET /api/v1/tools` | n/a | — | — | self-describing catalogue |
+| `GET|POST /api/v1/tools/<name>` | name regex + `_BOUNDS` + schema | key if set | yes | write args gated |
+| `POST /api/v1/mcp` | JSON-RPC shape | key if set | yes | same write gate — not bypassable by transport |
+| `POST /api/v1/agent` | question + key required | key if set | yes | caller's LLM key, never stored |
+| `GET /api/v1/providers` | n/a | — | — | static catalogue |
+
+Gap that remains: **no structured request logging.** The access log is silenced
+deliberately (the agent endpoint carries a user's API key in its body), so there
+is no per-request record at all. Correct for privacy, a real gap for debugging.
+
+### Phase 7b — frontend performance
+
+No build step, so what is in the repo is what ships.
+
+| Page | First visit (gzipped) |
+|---|---|
+| `/` | 9.7 KB |
+| `/terminal` | 14.2 KB |
+| `/dashboard` | 17.9 KB |
+
+- **20 KB gzipped for every asset combined.** Nothing to bundle, tree-shake or
+  code-split; adding a bundler would cost more than it saves.
+- **Zero external requests** — no CDN, no fonts, no analytics. Enforced by CSP,
+  not just convention.
+- 5 requests to interactive on `/terminal`, all same-origin.
+- `theme-init.js` (337 B) is render-blocking in `<head>` **on purpose**: it sets
+  the theme before first paint to avoid a flash. Correct trade.
+- Charts are hand-rolled inline SVG redrawn on theme change, which is why
+  `app.js` listens for `themechange` rather than relying on CSS.
+
+### Phase 11 — runtime validation
+
+The gap that mattered. Now covered by `tests/test_end_to_end.py`, which drives a
+real server the way a browser does:
+
+- both sections load, and every asset they reference is served
+- the dashboard payload contract is checked in both directions
+- every element id the JS reaches for exists in its page (a null
+  `getElementById` throws on the next line and kills the page silently)
+- the terminal runs the full stack — HTTP handler, agent loop, tool registry and
+  analyzers are all production code, with only the model stubbed
+- the answer is asserted to be checkable against the tool that produced it
+
+Verified by hand as well as in tests: a pip-installed wheel in a clean venv
+serves `/`, `/dashboard`, `/terminal`, `/static/*`, `/api/v1/tools`, and lists
+all nine tools over MCP. That entire path failed before revision 2.
+
+---
+
+## 10. What is still not done
+
+Named plainly, because the scorecard above would otherwise imply coverage that
+does not exist.
+
+| Item | Why it matters | Status |
+|---|---|---|
+| No browser ever rendered these pages | Structure, wiring and safety are tested; **visual layout is not**. A CSS mistake would pass every test here. | Open — needs a human to look, or Playwright |
+| No structured request logging | Nothing to debug a production incident with | Open, deliberate trade against key privacy |
+| `toolkit.py` at 60% coverage | The gaps are error branches | Open |
+| Equity prices have no second source | Every keyless alternative is behind a bot challenge | Mitigated (retry + health), not solved |
+| No staging environment | Changes go from laptop to main | Open |
+| The engine has no measured edge | The reason the whole backtesting apparatus exists | Open by nature, honestly documented |
