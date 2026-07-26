@@ -295,6 +295,12 @@ def tool_strategy_backtest(args: dict[str, Any]) -> dict[str, Any]:
         return {"error": str(e)}
 
     payload = _dump(report)
+    if report.ruined_at_bar is not None:
+        payload["warning"] = (
+            f"ACCOUNT WIPED OUT at bar {report.ruined_at_bar}. A compounding "
+            "position lost more than 100% in one bar and trading stopped there. "
+            "Every metric describes a dead account."
+        )
     if report.lookahead_violations:
         payload["warning"] = (
             f"LOOKAHEAD DETECTED on {len(report.lookahead_violations)} sampled bar(s). "

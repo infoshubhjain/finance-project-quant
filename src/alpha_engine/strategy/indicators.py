@@ -121,3 +121,54 @@ def crossed_below(fast: Series, slow: Series, i: int) -> bool:
     if None in (a, b, pa, pb):
         return False
     return a < b and pa >= pb  # type: ignore[operator]
+
+
+def supertrend(
+    candles: list[Candle], period: int = 10, multiplier: float = 3.0
+) -> tuple[Series, list[int | None]]:
+    """Supertrend: an ATR band that flips side with the trend.
+
+    Returns `(line, direction)`, both index-aligned, where direction is `1` in an
+    uptrend and `-1` in a downtrend. The only indicator from the original
+    `nifty_backtester` library with no equivalent anywhere in this repo.
+
+    The band *ratchets*: while direction holds, the line may only move in the
+    favourable direction, so it behaves as a trailing stop rather than a
+    reversing average. Getting that wrong turns it into a noisy mid-price and is
+    the usual bug in a reimplementation, so it is spelled out below.
+
+    Reads only bars `[0..i]` at bar `i`. Never a future bar.
+    """
+    n = len(candles)
+    line: Series = [None] * n
+    direction: list[int | None] = [None] * n
+    atr_values = atr(candles, period)
+
+    upper_prev = lower_prev = None
+    for i in range(n):
+        band = atr_values[i]
+        if band is None:
+            continue
+        mid = (candles[i].high + candles[i].low) / 2.0
+        upper = mid + multiplier * band
+        lower = mid - multiplier * band
+
+        # Ratchet against the previous band unless price closed through it.
+        if upper_prev is not None and not (upper < upper_prev or candles[i - 1].close > upper_prev):
+            upper = upper_prev
+        if lower_prev is not None and not (lower > lower_prev or candles[i - 1].close < lower_prev):
+            lower = lower_prev
+
+        previous = direction[i - 1] if i and direction[i - 1] is not None else 1
+        if candles[i].close > upper:
+            current = 1
+        elif candles[i].close < lower:
+            current = -1
+        else:
+            current = previous
+
+        direction[i] = current
+        line[i] = lower if current == 1 else upper
+        upper_prev, lower_prev = upper, lower
+
+    return line, direction

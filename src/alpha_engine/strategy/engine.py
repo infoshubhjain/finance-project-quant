@@ -80,6 +80,13 @@ class StrategyBacktest(BaseModel):
     trades: list[Trade]
     metrics: StrategyMetrics
 
+    ruined_at_bar: int | None = Field(
+        None,
+        description="bar index where the account was wiped out, if it was. "
+        "A compounding short can lose more than 100% in one bar; when that "
+        "happens trading stops and every metric describes a dead account.",
+    )
+
     lookahead_checked: bool = False
     lookahead_violations: list[int] = Field(
         default_factory=list,
@@ -253,6 +260,7 @@ def run_strategy_backtest(
 
     returns: list[float] = [0.0]
     equity: list[float] = [capital]
+    ruined_at: int | None = None
     for i in range(1, len(prices)):
         prev = prices[i - 1]
         bar_ret = (prices[i] / prev - 1.0) if prev > 0 else 0.0
@@ -260,8 +268,37 @@ def run_strategy_backtest(
         gross = position[i - 1] * bar_ret
         turnover = abs(position[i] - position[i - 1])
         net = gross - turnover * (txn_cost_bps / 10_000.0)
+
+        # RUIN. An account cannot lose more than everything, and a compounding
+        # model will happily let it: a short position (-1) through a bar that
+        # rises 300% gives net = -3.0, so equity *= (1 - 3.0) and the curve goes
+        # NEGATIVE. Every metric downstream then reports nonsense — a real run
+        # on option data produced "total return +609%" beside "max drawdown
+        # -293%" and a negative Sharpe, which is not a bad result, it is not a
+        # result at all.
+        #
+        # Options make this ordinary rather than exotic: a premium routinely
+        # doubles in a session, and this engine is built to trade the option leg.
+        #
+        # So the account is wiped out at zero and trading stops. That is what
+        # would actually happen, and it makes the metrics honest: -100% return,
+        # -100% drawdown, and `ruined_at_bar` naming the bar it happened on.
+        if ruined_at is not None:
+            returns.append(0.0)
+            equity.append(0.0)
+            continue
+        if 1.0 + net <= 0.0:
+            ruined_at = i
+            returns.append(-1.0)
+            equity.append(0.0)
+            continue
+
         returns.append(net)
         equity.append(equity[-1] * (1.0 + net))
+
+    if ruined_at is not None:
+        # Nothing is held after ruin, so no trade may be reported as still open.
+        position = position[:ruined_at] + [0] * (len(position) - ruined_at)
 
     trades = _extract_trades(position, prices, timestamps, qty, txn_cost_bps)
     metrics, drawdown = compute_metrics(
@@ -291,6 +328,7 @@ def run_strategy_backtest(
         signals_confirmed=sum(1 for ok in confirmed if ok),
         trades=trades,
         metrics=metrics,
+        ruined_at_bar=ruined_at,
         lookahead_checked=check_lookahead,
         lookahead_violations=violations,
     )

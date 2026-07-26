@@ -528,7 +528,7 @@ strategies/             drop a BaseStrategy subclass here; it's found automatica
 mcp_server.py           3-line shim; MCP client configs point at a file path
 scripts/daily.sh        the scheduled job: lock, timeout, rotation, health check
 scripts/install-cron.sh one-command cron setup
-tests/                  ~2330 tests, all network-free
+tests/                  ~2520 tests, all network-free
 ```
 
 ---
@@ -539,7 +539,7 @@ tests/                  ~2330 tests, all network-free
 source .venv/bin/activate
 pip install -e ".[dev]"
 
-pytest -q                                # ~2200 tests, ~20s, no network
+pytest -q                                # ~2520 tests, ~40s, no network
 ruff check . && ruff format --check .    # CI gates both
 python -m alpha_engine.cli.main scan BTC # manual end-to-end
 ```

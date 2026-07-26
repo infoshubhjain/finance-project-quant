@@ -1121,17 +1121,36 @@ def cmd_strategy_backtest(args: argparse.Namespace) -> int:
     from alpha_engine.strategy.engine import run_strategy_backtest
     from alpha_engine.strategy.loader import load_strategy
 
-    asset = args.asset.upper()
-    market = detect_market(asset, args.market)
+    from alpha_engine.strategy.csv_data import CsvFormatError, load_series
+
+    interval = Interval(args.interval)
     cache = Cache()
 
-    series = _load_series(asset, market, args.days, args.no_refresh, cache)
-    if not series.candles:
-        print(f"[error] no price data for {asset}", file=sys.stderr)
-        return 1
+    # --csv is the path for data no API serves — Indian option history above all,
+    # which is what the original nifty_backtester existed to work on.
+    if args.csv:
+        try:
+            series = load_series(args.csv, asset=args.asset, interval=interval)
+        except CsvFormatError as e:
+            print(f"[error] {e}", file=sys.stderr)
+            return 1
+        asset, market = series.asset, detect_market(series.asset, args.market)
+    else:
+        asset = args.asset.upper()
+        market = detect_market(asset, args.market)
+        series = _load_series(asset, market, args.days, args.no_refresh, cache)
+        if not series.candles:
+            print(f"[error] no price data for {asset}", file=sys.stderr)
+            return 1
 
     option_series = None
-    if args.option:
+    if args.option_csv:
+        try:
+            option_series = load_series(args.option_csv, interval=interval)
+        except CsvFormatError as e:
+            print(f"[error] option CSV: {e}", file=sys.stderr)
+            return 1
+    elif args.option:
         option_asset = args.option.upper()
         option_series = _load_series(
             option_asset,
@@ -1195,6 +1214,16 @@ def cmd_strategy_backtest(args: argparse.Namespace) -> int:
             f"{report.lookahead_violations[:8]}\n"
             "     This strategy's signals change when future bars are removed.\n"
             "     Every metric below is meaningless until that is fixed.",
+            file=sys.stderr,
+        )
+
+    if report.ruined_at_bar is not None:
+        print(
+            f"\n  !! ACCOUNT WIPED OUT at bar {report.ruined_at_bar} "
+            f"({report.timestamps[report.ruined_at_bar]:%Y-%m-%d}).\n"
+            "     A compounding position lost more than 100% in a single bar, so\n"
+            "     trading stopped there. Every figure below describes a dead\n"
+            "     account, not a strategy worth tuning.",
             file=sys.stderr,
         )
 
@@ -1847,6 +1876,24 @@ def build_parser() -> argparse.ArgumentParser:
     sbt.add_argument("--market", help="override market auto-detection")
     sbt.add_argument("--days", type=int, default=365, help="history window (default 365)")
     sbt.add_argument("--option", help="ticker of an option series to cross-verify signals against")
+    sbt.add_argument(
+        "--csv",
+        metavar="PATH",
+        help="backtest your own OHLCV CSV instead of fetching (columns: "
+        "datetime,open,high,low,close[,volume])",
+    )
+    sbt.add_argument(
+        "--option-csv",
+        metavar="PATH",
+        help="the option contract's own CSV, to cross-verify every signal against",
+    )
+    sbt.add_argument(
+        "--interval",
+        choices=[i.value for i in Interval],
+        default=Interval.DAY.value,
+        help="bar interval of the CSV data; sets the Sharpe annualisation "
+        "(5-minute bars annualised as daily overstate Sharpe ~9x)",
+    )
     sbt.add_argument(
         "--trade-on",
         choices=["underlying", "option"],

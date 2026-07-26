@@ -2,6 +2,81 @@
 
 All notable changes to Alpha Engine are recorded here. Dates are UTC.
 
+## [0.5.0] — 2026-07-26
+
+The scheduled scan had been green every day while collecting no futures
+positioning data at all, and the web app had been shipped without anyone ever
+opening it in a browser. Both are fixed, and the things found while fixing them
+were worse than the things reported.
+
+### Fixed — the scraper
+
+- **The daily job reported success while collecting nothing.** Binance answers
+  `HTTP 451` to every request from a datacenter IP, which is exactly where the
+  scheduled scan runs. Nothing noticed because health was recorded per *kind*:
+  CoinGecko's single dominance reading kept `onchain` at "1 item, ok" while six
+  fetches returned nothing. Health is now recorded per **feed**. On-chain
+  observations per run went from 1 to 451.
+- **No single exchange is reachable from everywhere, and the blocks point in
+  opposite directions.** Bybit — the obvious fallback — answers `403` from CI
+  and `200` from a laptop; OKX and Kraken are the reverse. `FUTURES_CHAIN` now
+  walks adapters until one answers and latches the winner.
+  `.github/workflows/probe-exchanges.yml` measures this from the runner itself.
+- **The macro cache never hit.** Staleness was measured from the newest
+  *observation's date* rather than from when the series was fetched, and FRED's
+  monthly data is always weeks old by construction. A four-equity batch made
+  twelve FRED calls instead of three, forever.
+- **`no_refresh=True` did not prevent network access.** A cache *miss* fetched
+  regardless of the flag. This is the guarantee that makes the API safe to
+  expose, and it was false.
+- **Two adapters, two units for open interest.** Blending them put a ~100,000x
+  step in the series that scores as a colossal open-interest build-up.
+
+### Fixed — the frontend, once someone rendered it
+
+- The dashboard laid out at **13,171px tall** with rows 1,571px high: an
+  unclamped `<pre>` of thesis prose, one signal per screenful.
+- The terminal's composer placeholder was clipped mid-word on mobile.
+- Cards below the fold are revealed on scroll, so printing produced a header and
+  white space.
+
+### Fixed — correctness
+
+- **An account could go below zero.** A compounding short through a bar that
+  rises 300% gives `net = -3.0`, so equity `*= (1 - 3.0)`. A real run on option
+  data reported "total return +609%" beside "max drawdown -293%". Ruin now stops
+  trading at zero and every metric describes a dead account honestly.
+- Out-of-range tool arguments returned confidently wrong numbers: `step=-5` gave
+  HTTP 200 and a backtest with zero signals, because `range(w, n, -5)` is empty
+  rather than an error.
+- CI had been red since 2026-07-23 for an unrelated reason: `ruff>=0.4` is
+  unpinned, and 0.16 widened its default rule set.
+
+### Added
+
+- **`strategy/`** — user-written strategy classes with trade-level P&L,
+  Sharpe/Sortino/Calmar, and option cross-verification. Ported from the
+  standalone `nifty_backtester`, pure-Python, no new dependencies. Lagged fills
+  and a lookahead detector are built in.
+- **`--csv` / `--option-csv`** — backtest your own data. The reason the original
+  existed: no free API serves Indian option history.
+- **`toolkit.py`** — one tool table behind MCP-over-stdio, MCP-over-HTTP and
+  REST, so the three cannot drift apart.
+- **`/dashboard` and `/terminal`** — the terminal is a BYO-key AI chat that
+  answers only by calling engine tools and shows every call beside the prose.
+  Supports local models via `LLM_API_BASE` (Ollama, LM Studio).
+- **Structured request logging** (`--log-requests`) with no code path to a body,
+  header or query value; paths collapse to a route template.
+- Signal-log integrity gate, GitHub-issue alerting on data outages, `supertrend`,
+  and a key-gated FMP price fallback.
+
+### Changed
+
+- `web/` and `mcp_server.py` moved **inside** the package, so `pip install`
+  ships the dashboard, terminal, HTTP API and MCP server.
+- `read_records` memoises on the log's `(mtime, size)` — correct only because
+  the log is append-only. 66 ms to 0.05 ms at a year of scale.
+
 ## [Unreleased] — the launcher, fixed
 
 `start.sh` is the first and often only command anyone runs, and it had two bugs

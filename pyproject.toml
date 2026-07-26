@@ -1,6 +1,6 @@
 [project]
 name = "alpha-engine"
-version = "0.4.0"
+version = "0.5.0"
 description = "An open, deterministic research engine that turns market data into structured, confidence-scored signals, with a 504-factor library, joint stock+options backtesting, source health monitoring and paper-first execution. Research and education only, not investment advice."
 readme = "README.md"
 requires-python = ">=3.10"
