@@ -25,7 +25,7 @@ from alpha_engine import health
 from alpha_engine.analyzers.crypto_onchain import analyze_onchain
 from alpha_engine.cache.interface import Cache, LocalStore
 from alpha_engine.cache.models import OnChainObservation
-from alpha_engine.ingestion import binance_futures, bybit_futures
+from alpha_engine.ingestion import binance_futures, bybit_futures, gate_futures
 from alpha_engine.orchestrator import engine
 
 T0 = datetime(2026, 7, 1, tzinfo=timezone.utc)
@@ -116,24 +116,95 @@ def test_bybit_http_error_returns_empty(monkeypatch, tmp_path):
 
 
 # --------------------------------------------------------------------------
+# 1b. The Gate.io adapter — the tier that answers from BOTH environments
+# --------------------------------------------------------------------------
+
+
+def test_gate_parses_funding_rows(monkeypatch, tmp_path):
+    """Gate returns a bare array with SECOND-resolution timestamps, unlike the
+    millisecond ones Binance and Bybit use."""
+    rows = [{"r": "0.000003", "t": 1785024001}, {"r": "-0.00003", "t": 1784995201}]
+    monkeypatch.setattr(gate_futures.net, "get", lambda *a, **kw: FakeResp(rows))
+    obs = gate_futures.fetch_funding_rate("BTC", cache=Cache(LocalStore(tmp_path)))
+
+    assert len(obs) == 2
+    assert obs[0].value == pytest.approx(0.000003)
+    assert obs[0].source == "gate_futures"
+    # Seconds read as seconds: 1785024001 is 2026, not 1970.
+    assert obs[0].ts.year == 2026
+
+
+def test_gate_seconds_are_not_read_as_milliseconds(monkeypatch, tmp_path):
+    """The specific bug this guards: dividing by 1000 dates every observation to
+    1970, the retention window drops them all, and the analyzer silently sees an
+    empty series while the fetch reports success."""
+    monkeypatch.setattr(
+        gate_futures.net, "get", lambda *a, **kw: FakeResp([{"r": "0.0001", "t": 1785024001}])
+    )
+    obs = gate_futures.fetch_funding_rate("ETH", cache=Cache(LocalStore(tmp_path)))
+    assert obs[0].ts > datetime(2020, 1, 1, tzinfo=timezone.utc)
+
+
+def test_gate_open_interest_reads_the_contract_count(monkeypatch, tmp_path):
+    rows = [{"time": 1785034500, "open_interest": 657343040, "open_interest_usd": 4239465572.8}]
+    monkeypatch.setattr(gate_futures.net, "get", lambda *a, **kw: FakeResp(rows))
+    obs = gate_futures.fetch_open_interest("BTC", cache=Cache(LocalStore(tmp_path)))
+    assert obs[0].value == pytest.approx(657343040)
+
+
+def test_gate_error_object_instead_of_a_list_is_refused(monkeypatch, tmp_path):
+    """Gate answers errors with an object, sometimes at HTTP 200."""
+    monkeypatch.setattr(
+        gate_futures.net,
+        "get",
+        lambda *a, **kw: FakeResp({"label": "CONTRACT_NOT_FOUND", "message": "nope"}),
+    )
+    assert gate_futures.fetch_funding_rate("BTC", cache=Cache(LocalStore(tmp_path))) == []
+
+
+def test_gate_http_error_returns_empty(monkeypatch, tmp_path):
+    monkeypatch.setattr(gate_futures.net, "get", lambda *a, **kw: FakeResp([], status_code=502))
+    assert gate_futures.fetch_open_interest("BTC", cache=Cache(LocalStore(tmp_path))) == []
+
+
+def test_gate_skips_malformed_rows(monkeypatch, tmp_path):
+    rows = [{"r": "0.0001", "t": 1785024001}, {"r": None, "t": "garbage"}, {}]
+    monkeypatch.setattr(gate_futures.net, "get", lambda *a, **kw: FakeResp(rows))
+    assert len(gate_futures.fetch_funding_rate("BTC", cache=Cache(LocalStore(tmp_path)))) == 1
+
+
+def test_every_chain_adapter_covers_the_same_three_assets():
+    """A tier that supports fewer symbols silently narrows coverage when it wins."""
+    for adapter in engine.FUTURES_CHAIN:
+        for asset in ("BTC", "ETH", "SOL"):
+            assert adapter.supports(asset), f"{adapter.SOURCE} is missing {asset}"
+        assert not adapter.supports("DOGE")
+
+
+# --------------------------------------------------------------------------
 # 2. Failover behaviour
 # --------------------------------------------------------------------------
 
 
-def _refresh_onchain(monkeypatch, tmp_path, binance_returns, bybit_returns):
-    """Run just the onchain leg of refresh_context with both adapters stubbed."""
-    calls: dict[str, list[str]] = {"binance": [], "bybit": []}
+def _refresh_onchain(monkeypatch, tmp_path, answers: dict[str, list]):
+    """Run the onchain leg of refresh_context with the WHOLE chain stubbed.
 
-    def fake_binance(asset, cache=None):
-        calls["binance"].append(asset)
-        return binance_returns
+    `answers` maps a source name to what that adapter returns. Every adapter in
+    `FUTURES_CHAIN` is stubbed, not just the ones a given test cares about — an
+    unstubbed adapter would reach the real internet, which is how this file
+    first went red after a third tier was added.
+    """
+    calls: dict[str, list[str]] = {adapter.SOURCE: [] for adapter in engine.FUTURES_CHAIN}
 
-    def fake_bybit(asset, cache=None):
-        calls["bybit"].append(asset)
-        return bybit_returns
+    for adapter in engine.FUTURES_CHAIN:
+        source = adapter.SOURCE
 
-    monkeypatch.setattr(binance_futures, "fetch_all", fake_binance)
-    monkeypatch.setattr(bybit_futures, "fetch_all", fake_bybit)
+        def fake(asset, cache=None, _source=source):
+            calls[_source].append(asset)
+            return answers.get(_source, [])
+
+        monkeypatch.setattr(adapter, "fetch_all", fake)
+
     monkeypatch.setattr(
         "alpha_engine.ingestion.coingecko.fetch_btc_dominance", lambda cache=None: 54.2
     )
@@ -144,32 +215,64 @@ def _refresh_onchain(monkeypatch, tmp_path, binance_returns, bybit_returns):
     return report, calls
 
 
-def test_binance_working_means_bybit_is_never_called(monkeypatch, tmp_path):
-    obs = [OnChainObservation(metric="funding_rate_BTC", ts=T0, value=0.0001, source="binance")]
-    report, calls = _refresh_onchain(monkeypatch, tmp_path, obs, [])
-
-    assert calls["binance"] == ["BTC", "ETH", "SOL"]
-    assert calls["bybit"] == []
-    assert report.item_counts["onchain.binance_futures"] == 3
-    # An untried fallback must not be recorded, or it ages into a false alarm.
-    assert "onchain.bybit_futures" not in report.item_counts
+def _obs_from(source: str) -> list[OnChainObservation]:
+    return [OnChainObservation(metric="funding_rate_BTC", ts=T0, value=0.0001, source=source)]
 
 
-def test_binance_geoblocked_falls_over_to_bybit(monkeypatch, tmp_path):
-    """The CI case: Binance returns nothing for everything."""
-    obs = [OnChainObservation(metric="funding_rate_BTC", ts=T0, value=0.0001, source="bybit")]
-    report, calls = _refresh_onchain(monkeypatch, tmp_path, [], obs)
+def test_the_chain_is_ordered_and_every_member_has_the_required_surface():
+    """A chain member missing `SOURCE` or `supports` fails at runtime inside a
+    scheduled job, which is the worst place to find out."""
+    assert [a.SOURCE for a in engine.FUTURES_CHAIN] == [
+        "binance_futures",
+        "gate_futures",
+        "bybit_futures",
+    ]
+    for adapter in engine.FUTURES_CHAIN:
+        assert callable(adapter.supports)
+        assert callable(adapter.fetch_all)
+        assert adapter.supports("BTC")
 
-    assert calls["bybit"] == ["BTC", "ETH", "SOL"]
-    assert report.item_counts["onchain.bybit_futures"] == 3
-    assert report.item_counts["onchain.binance_futures"] == 0
+
+def test_the_first_working_adapter_wins_and_the_rest_are_never_called(monkeypatch, tmp_path):
+    first = engine.FUTURES_CHAIN[0]
+    report, calls = _refresh_onchain(monkeypatch, tmp_path, {first.SOURCE: _obs_from("binance")})
+
+    assert calls[first.SOURCE] == ["BTC", "ETH", "SOL"]
+    for later in engine.FUTURES_CHAIN[1:]:
+        assert calls[later.SOURCE] == [], f"{later.SOURCE} should not have been tried"
+        # An untried fallback must not be recorded, or it ages into a false alarm.
+        assert f"onchain.{later.SOURCE}" not in report.item_counts
+    assert report.item_counts[f"onchain.{first.SOURCE}"] == 3
 
 
-def test_the_failover_latches_instead_of_reprobing_every_asset(monkeypatch, tmp_path):
+def test_a_blocked_primary_falls_through_to_the_next_working_tier(monkeypatch, tmp_path):
+    """The real CI case: Binance answers 451 and Bybit answers 403, so the
+    middle tier is the one that has to carry the run."""
+    working = engine.FUTURES_CHAIN[1]
+    report, calls = _refresh_onchain(monkeypatch, tmp_path, {working.SOURCE: _obs_from("gate")})
+
+    assert calls[working.SOURCE] == ["BTC", "ETH", "SOL"]
+    assert report.item_counts[f"onchain.{working.SOURCE}"] == 3
+    assert report.item_counts[f"onchain.{engine.FUTURES_CHAIN[0].SOURCE}"] == 0
+
+
+def test_the_choice_latches_instead_of_reprobing_every_asset(monkeypatch, tmp_path):
     """A geo-block is a property of the host, not the symbol. Re-probing would
     spend one doomed request per asset per run to relearn the same fact."""
-    _report, calls = _refresh_onchain(monkeypatch, tmp_path, [], [])
-    assert calls["binance"] == ["BTC"], "Binance should be probed once, then dropped"
+    working = engine.FUTURES_CHAIN[-1]
+    _report, calls = _refresh_onchain(monkeypatch, tmp_path, {working.SOURCE: _obs_from("bybit")})
+
+    for dead in engine.FUTURES_CHAIN[:-1]:
+        assert calls[dead.SOURCE] == ["BTC"], f"{dead.SOURCE} should be probed once, then dropped"
+    assert calls[working.SOURCE] == ["BTC", "ETH", "SOL"]
+
+
+def test_every_tier_blocked_reports_zero_everywhere(monkeypatch, tmp_path):
+    """Nothing left to fall back to. Each tier must still be recorded at zero so
+    `ingest --strict` can turn the run red."""
+    report, _calls = _refresh_onchain(monkeypatch, tmp_path, {})
+    for adapter in engine.FUTURES_CHAIN:
+        assert report.item_counts[f"onchain.{adapter.SOURCE}"] == 0
 
 
 # --------------------------------------------------------------------------
@@ -237,13 +340,13 @@ def test_health_is_recorded_per_feed_not_only_per_kind(monkeypatch, tmp_path):
     health_file = tmp_path / "health.json"
     monkeypatch.setattr(health, "DEFAULT_PATH", health_file)
 
-    obs = [OnChainObservation(metric="funding_rate_BTC", ts=T0, value=0.0001, source="bybit")]
-    _refresh_onchain(monkeypatch, tmp_path, [], obs)
+    working = engine.FUTURES_CHAIN[1]
+    _refresh_onchain(monkeypatch, tmp_path, {working.SOURCE: _obs_from("gate")})
 
     recorded = health.load_health(health_file).sources
     assert "onchain" in recorded, "the aggregate is still recorded"
     assert "onchain.binance_futures" in recorded, "the dead feed must be visible on its own"
-    assert "onchain.bybit_futures" in recorded
+    assert "onchain.gate_futures" in recorded
     assert "onchain.coingecko_dominance" in recorded
     # The dead feed reports zero even though the kind's total is healthy.
     assert recorded["onchain.binance_futures"].total_items == 0

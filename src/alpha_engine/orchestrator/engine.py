@@ -47,7 +47,30 @@ from typing import Any
 from alpha_engine import health
 from alpha_engine.cache.interface import Cache, is_stale
 from alpha_engine.cache.models import PriceSeries
+from alpha_engine.ingestion import binance_futures, bybit_futures, gate_futures
 from alpha_engine.schema.signal import Market
+
+#: Futures positioning adapters, tried in order until one returns data.
+#
+# Every public futures API is blocked from *somewhere*, and the blocks point in
+# opposite directions, so no single source works everywhere. Measured
+# 2026-07-26 from a US home connection and from a GitHub Actions runner:
+#
+#     exchange   home     CI
+#     binance    200      451   regulatory geo-block on datacenter ranges
+#     bybit      200      403   CloudFront country block
+#     okx        timeout  200   unreachable from the US residential IP
+#     kraken     timeout  200   same
+#     gate       200      200
+#
+# Order is deepest-market-first, then the one that answers in both places.
+# Binance carries the most liquidity so it wins where it is reachable; Gate is
+# the tier that keeps the scheduled scan working. Re-probe with
+# `.github/workflows/probe-exchanges.yml` before reordering this — the answer is
+# a property of the network, not of the code, and it changes without notice.
+#
+# Each entry needs `supports(asset)`, `fetch_all(asset, cache)` and `SOURCE`.
+FUTURES_CHAIN = (binance_futures, gate_futures, bybit_futures)
 
 
 class TriggerKind(str):
@@ -249,8 +272,6 @@ def refresh_context(
     """
     from alpha_engine.analyzers.sentiment import score_news
     from alpha_engine.ingestion import (
-        binance_futures,
-        bybit_futures,
         calendar_file,
         coingecko,
         finnhub_news,
@@ -337,35 +358,45 @@ def refresh_context(
     def _onchain() -> dict[str, int]:
         """Per-feed counts, because the aggregate is what hid the CI outage.
 
-        Binance is tried first (deeper market, longer history) and Bybit is the
-        fallback. Binance answers HTTP 451 to every request from a datacenter
-        IP, which is exactly where the scheduled scan runs, so on CI the
-        fallback is the one that actually works — while on a laptop Binance
-        answers fine and Bybit is never touched.
+        Futures positioning comes from the first adapter in FUTURES_CHAIN that
+        actually answers. A chain rather than a single fallback because the
+        blocks point in opposite directions — measured 2026-07-26, Binance and
+        Bybit answer from a home connection but not from a GitHub runner, while
+        OKX and Kraken answer from the runner but not from the home connection.
+        Any single second choice fixes one environment and breaks the other.
+        Gate.io answers in both, which is why it sits where it does.
 
-        The fallback *latches*. A geo-block is a property of the host, not of
-        the asset: once Binance has returned nothing for one symbol it will for
-        all of them, so re-probing per asset would spend six doomed requests
-        every single run to learn the same fact.
+        The choice *latches*. A geo-block is a property of the host, not of the
+        symbol: once an adapter has returned nothing for one asset it will for
+        all of them, so re-probing per asset spends a doomed request per asset
+        per run to relearn the same fact.
         """
         counts: dict[str, int] = {}
-        use_binance = True
+        chain = list(FUTURES_CHAIN)
+        futures_source = None  # latched once one adapter answers
 
         for asset in assets:
-            if binance_futures.supports(asset):
-                if use_binance:
-                    fetched = len(binance_futures.fetch_all(asset, cache=cache))
-                    counts["binance_futures"] = counts.get("binance_futures", 0) + fetched
-                    if fetched == 0:
-                        use_binance = False
-                if not use_binance and bybit_futures.supports(asset):
-                    counts["bybit_futures"] = counts.get("bybit_futures", 0) + len(
-                        bybit_futures.fetch_all(asset, cache=cache)
+            if glassnode.has_key():
+                counts["glassnode"] = counts.get("glassnode", 0) + len(
+                    glassnode.fetch_all(asset, cache=cache)
+                )
+
+            if futures_source is not None:
+                if futures_source.supports(asset):
+                    counts[futures_source.SOURCE] = counts.get(futures_source.SOURCE, 0) + len(
+                        futures_source.fetch_all(asset, cache=cache)
                     )
-                if glassnode.has_key():
-                    counts["glassnode"] = counts.get("glassnode", 0) + len(
-                        glassnode.fetch_all(asset, cache=cache)
-                    )
+                continue
+
+            # Nothing chosen yet: walk the chain until something returns data.
+            for adapter in chain:
+                if not adapter.supports(asset):
+                    continue
+                fetched = len(adapter.fetch_all(asset, cache=cache))
+                counts[adapter.SOURCE] = counts.get(adapter.SOURCE, 0) + fetched
+                if fetched:
+                    futures_source = adapter
+                    break
 
         counts["coingecko_dominance"] = (
             1 if coingecko.fetch_btc_dominance(cache=cache) is not None else 0
