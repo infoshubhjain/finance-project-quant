@@ -28,7 +28,7 @@ from alpha_engine.cache.models import Candle, Interval, PriceSeries
 from alpha_engine.dashboard.service import build_asset_history
 from alpha_engine.schema.signal import Direction, Market, Signal, SignalSource, Timeframe
 from alpha_engine.validation.recorder import record_signal
-from web.server import DashboardHandler
+from web.server import AppHandler
 
 T0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
@@ -99,7 +99,7 @@ def test_asset_history_scores_against_cached_prices(tmp_path):
 
 @pytest.fixture()
 def server_url():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), DashboardHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", 0), AppHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     yield f"http://127.0.0.1:{server.server_address[1]}"

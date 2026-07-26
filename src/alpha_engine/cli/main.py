@@ -842,6 +842,38 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         for kind, err in report.failed.items():
             print(f"FAILED {kind}: {err}", file=sys.stderr)
 
+    # A feed that answered but returned nothing is the failure mode this project
+    # exists to catch, and it is invisible in the exit code below because every
+    # adapter degrades to empty instead of raising. Report it always; escalate
+    # it to an exit code only under --strict.
+    empty_feeds = [
+        name
+        for name, count in sorted(report.item_counts.items())
+        if count == 0 and "." in name and report.item_counts.get(name.split(".")[0], 0) > 0
+    ]
+    for name in empty_feeds:
+        print(
+            f"[ingest] WARNING {name}: 0 items (another feed covered this kind)",
+            file=sys.stderr,
+        )
+
+    # A whole KIND at zero is different: nothing covered it, so the analyzers
+    # that read it will silently score without their input from now on.
+    dead_kinds = [
+        kind
+        for kind in sorted(report.refreshed)
+        if report.item_counts.get(kind, 0) == 0 and kind not in report.failed
+    ]
+    for kind in dead_kinds:
+        print(f"[ingest] EMPTY {kind}: every feed returned 0 items", file=sys.stderr)
+
+    if args.strict and (dead_kinds or report.failed):
+        print(
+            "[ingest] --strict: exiting non-zero so a scheduled run turns red "
+            "instead of succeeding with no data",
+            file=sys.stderr,
+        )
+        return 1
     return 1 if report.failed else 0
 
 
@@ -970,16 +1002,24 @@ def cmd_orchestrate(args: argparse.Namespace) -> int:
 
 
 def cmd_dashboard(args: argparse.Namespace) -> int:
-    """Launch the read-only web dashboard."""
+    """Launch the web app: dashboard, AI terminal, and the HTTP/MCP API."""
     import sys as _sys
 
     host = getattr(args, "host", "127.0.0.1")
     port = getattr(args, "port", 8000)
 
+    forwarded = [f"--host={host}", f"--port={port}"]
+    if getattr(args, "allow_writes", False):
+        forwarded.append("--allow-writes")
+    if getattr(args, "rate_limit", None) is not None:
+        forwarded.append(f"--rate-limit={args.rate_limit}")
+    if getattr(args, "cors", None):
+        forwarded.append(f"--cors={args.cors}")
+
     try:
         from web.server import main as web_main
 
-        return web_main([f"--host={host}", f"--port={port}"])
+        return web_main(forwarded)
     except ImportError:
         print(
             f"[error] web server module not found. Run directly:\n"
@@ -987,6 +1027,207 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
             file=_sys.stderr,
         )
         return 1
+
+
+def cmd_strategies(args: argparse.Namespace) -> int:
+    """List the strategies available to `strategy-backtest`."""
+    from alpha_engine.strategy.loader import list_strategies
+
+    catalogue = list_strategies()
+    strategies = catalogue["strategies"]
+
+    if not strategies:
+        print("No strategies found.")
+    for entry in strategies:
+        print(f"\n  {entry['key']}  —  {entry['name']}")
+        print(f"    {entry['description']}")
+        if entry["params"]:
+            params = ", ".join(f"{k}={v}" for k, v in entry["params"].items())
+            print(f"    params: {params}")
+
+    print(f"\nStrategy folder: {catalogue['strategy_dir']}")
+    print("Drop a BaseStrategy subclass in there and it appears here automatically.")
+
+    if catalogue["errors"]:
+        print("\nFiles that failed to load:", file=sys.stderr)
+        for name, error in catalogue["errors"].items():
+            print(f"  {name}: {error}", file=sys.stderr)
+    return 0
+
+
+def cmd_strategy_backtest(args: argparse.Namespace) -> int:
+    """Trade-level backtest of one strategy: equity curve, trades, Sharpe.
+
+    Distinct from `backtest`, which measures whether the ENGINE's own signals
+    were directionally right. This measures what a position book following your
+    rule would have done — including transaction costs and drawdown.
+    """
+    from alpha_engine.strategy.engine import run_strategy_backtest
+    from alpha_engine.strategy.loader import load_strategy
+
+    asset = args.asset.upper()
+    market = detect_market(asset, args.market)
+    cache = Cache()
+
+    series = _load_series(asset, market, args.days, args.no_refresh, cache)
+    if not series.candles:
+        print(f"[error] no price data for {asset}", file=sys.stderr)
+        return 1
+
+    option_series = None
+    if args.option:
+        option_asset = args.option.upper()
+        option_series = _load_series(
+            option_asset,
+            detect_market(option_asset, args.market),
+            args.days,
+            args.no_refresh,
+            cache,
+        )
+        if not option_series.candles:
+            print(f"[error] no price data for option {option_asset}", file=sys.stderr)
+            return 1
+
+    params: dict[str, float | int | str] = {}
+    for pair in args.param or []:
+        if "=" not in pair:
+            print(f"[error] --param expects name=value, got '{pair}'", file=sys.stderr)
+            return 2
+        key, raw = pair.split("=", 1)
+        try:
+            params[key.strip()] = int(raw)
+        except ValueError:
+            try:
+                params[key.strip()] = float(raw)
+            except ValueError:
+                params[key.strip()] = raw.strip()
+
+    try:
+        strategy = load_strategy(args.strategy, **params)
+        report = run_strategy_backtest(
+            strategy,
+            series,
+            option_series,
+            trade_on=args.trade_on,
+            require_option_confirmation=not args.no_confirmation,
+            capital=args.capital,
+            txn_cost_bps=args.cost_bps,
+        )
+    except (KeyError, ValueError) as e:
+        print(f"[error] {str(e).strip(chr(39))}", file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(report.model_dump_json(indent=2))
+        return 0
+
+    m = report.metrics
+    print(f"\n{report.strategy} on {report.asset}  ({report.bars} bars, {report.interval.value})")
+    if report.params:
+        print("  params: " + ", ".join(f"{k}={v}" for k, v in report.params.items()))
+    print(f"  P&L on: {report.trade_on}", end="")
+    if report.option_confirmation:
+        print(f"   ·   option-confirmed: {report.signals_confirmed}/{report.signals_raw} signals")
+    else:
+        print()
+
+    # Lookahead first and loud. Every number below it is void if this fires, and
+    # a reader who sees the Sharpe first has already been misled.
+    if report.lookahead_violations:
+        print(
+            f"\n  !! LOOKAHEAD DETECTED on {len(report.lookahead_violations)} sampled bar(s): "
+            f"{report.lookahead_violations[:8]}\n"
+            "     This strategy's signals change when future bars are removed.\n"
+            "     Every metric below is meaningless until that is fixed.",
+            file=sys.stderr,
+        )
+
+    print(f"\n  {'Total return':<22}{m.total_return_pct:>10.2f} %")
+    print(f"  {'CAGR':<22}{m.cagr_pct:>10.2f} %")
+    print(f"  {'Sharpe':<22}{m.sharpe:>10.3f}")
+    print(f"  {'Sortino':<22}{m.sortino:>10.3f}")
+    print(f"  {'Calmar':<22}{m.calmar:>10.3f}")
+    print(f"  {'Max drawdown':<22}{m.max_drawdown_pct:>10.2f} %")
+    print(f"  {'Annual volatility':<22}{m.annual_volatility_pct:>10.2f} %")
+    print(f"\n  {'Trades':<22}{m.trades:>10d}")
+    print(f"  {'Win rate':<22}{m.win_rate_pct:>10.2f} %")
+    profit_factor = f"{m.profit_factor:.3f}" if m.profit_factor is not None else "n/a (no losses)"
+    print(f"  {'Profit factor':<22}{profit_factor:>10}")
+    print(f"  {'Expectancy / trade':<22}{m.expectancy:>10.2f}")
+    print(f"  {'Best / worst trade':<22}{m.best_trade:>10.2f} / {m.worst_trade:.2f}")
+
+    if args.trades and report.trades:
+        print(f"\n  {'entry':<12}{'exit':<12}{'side':<7}{'entry px':>11}{'exit px':>11}{'pnl':>11}")
+        for trade in report.trades[-args.trades :]:
+            print(
+                f"  {trade.entry_ts:%Y-%m-%d}  {trade.exit_ts:%Y-%m-%d}  "
+                f"{trade.direction:<7}{trade.entry_price:>10.2f} {trade.exit_price:>10.2f} "
+                f"{trade.pnl:>10.2f}" + ("  (open)" if trade.open else "")
+            )
+
+    print(f"\n  {report.disclaimer}\n")
+    return 0
+
+
+def cmd_terminal(args: argparse.Namespace) -> int:
+    """Chat with an AI that drives the engine's tools, using YOUR API key.
+
+    The key comes from `--api-key`, or `$LLM_API_KEY` in the environment. It is
+    used for the request and never written anywhere.
+    """
+    from alpha_engine.narrative.agent import ask, summarize_for_terminal
+    from alpha_engine.narrative.providers import list_providers
+
+    api_key = args.api_key or os.environ.get("LLM_API_KEY", "")
+    if not api_key:
+        print(
+            "No API key. The terminal uses YOUR key — the engine never holds one.\n\n"
+            "  alpha-engine terminal --provider openai --api-key sk-...\n"
+            "  export LLM_API_KEY=sk-...   (or put it in .env)\n\nProviders:",
+            file=sys.stderr,
+        )
+        for entry in list_providers():
+            print(
+                f"  {entry['key']:<12}{entry['label']}\n"
+                f"  {'':<12}default model: {entry['default_model']}\n"
+                f"  {'':<12}keys: {entry['keys_url']}",
+                file=sys.stderr,
+            )
+        return 2
+
+    history: list[object] = []
+
+    def turn(question: str) -> None:
+        reply = ask(
+            question,
+            api_key=api_key,
+            provider_key=args.provider,
+            model=args.model,
+            history=history,
+        )
+        print()
+        print(summarize_for_terminal(reply))
+        print()
+        if not reply.error and reply.answer:
+            history.append({"role": "user", "content": question})
+            history.append({"role": "assistant", "content": reply.answer})
+
+    if args.question:
+        turn(" ".join(args.question))
+        return 0
+
+    print("Alpha Engine terminal. Every number comes from a tool, never the model.")
+    print("Ctrl-D or 'exit' to quit.\n")
+    while True:
+        try:
+            question = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if question in ("exit", "quit"):
+            return 0
+        if question:
+            turn(question)
 
 
 def _ic_cell(value: float | None) -> str:
@@ -1454,6 +1695,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ingest.add_argument("--force", action="store_true", help="refresh even if fresh")
     ingest.add_argument("--json", action="store_true", help="emit the report as JSON")
+    ingest.add_argument(
+        "--strict",
+        action="store_true",
+        help="exit non-zero if any data kind returned zero items (for scheduled runs)",
+    )
     ingest.set_defaults(func=cmd_ingest)
 
     health_cmd = sub.add_parser(
@@ -1492,10 +1738,89 @@ def build_parser() -> argparse.ArgumentParser:
     orch.add_argument("--output", help="also write the JSON report to this path")
     orch.set_defaults(func=cmd_orchestrate)
 
-    dashboard = sub.add_parser("dashboard", help="launch the read-only web dashboard")
+    dashboard = sub.add_parser(
+        "dashboard", help="launch the web app: dashboard + AI terminal + HTTP/MCP API"
+    )
     dashboard.add_argument("--host", default="127.0.0.1", help="bind address")
     dashboard.add_argument("--port", type=int, default=8000, help="port to listen on")
+    dashboard.add_argument(
+        "--allow-writes",
+        action="store_true",
+        help="permit API callers to append to the signal log (default: read-only)",
+    )
+    dashboard.add_argument(
+        "--rate-limit", type=int, default=None, help="API requests per minute per IP (0 disables)"
+    )
+    dashboard.add_argument("--cors", metavar="ORIGIN", help="send CORS headers for this origin")
     dashboard.set_defaults(func=cmd_dashboard)
+
+    strategies = sub.add_parser("strategies", help="list strategies available to strategy-backtest")
+    strategies.set_defaults(func=cmd_strategies)
+
+    sbt = sub.add_parser(
+        "strategy-backtest",
+        help="trade-level backtest of one strategy: equity curve, trades, Sharpe",
+        description=(
+            "Backtest a trading rule as a position book. Unlike `backtest` (which "
+            "scores the engine's own signals for directional accuracy), this "
+            "reports what the money would have done: entries, exits, transaction "
+            "costs, drawdown and Sharpe. Pass --option to require every signal to "
+            "be confirmed on a real option price series before it becomes a trade."
+        ),
+    )
+    sbt.add_argument("asset", help="underlying ticker, e.g. NIFTY, BTC, AAPL")
+    sbt.add_argument(
+        "--strategy", required=True, help="strategy class name (see `alpha-engine strategies`)"
+    )
+    sbt.add_argument(
+        "--param",
+        action="append",
+        metavar="NAME=VALUE",
+        help="override a strategy parameter; repeatable",
+    )
+    sbt.add_argument("--market", help="override market auto-detection")
+    sbt.add_argument("--days", type=int, default=365, help="history window (default 365)")
+    sbt.add_argument("--option", help="ticker of an option series to cross-verify signals against")
+    sbt.add_argument(
+        "--trade-on",
+        choices=["underlying", "option"],
+        default="underlying",
+        help="which leg P&L accrues on (default underlying)",
+    )
+    sbt.add_argument(
+        "--no-confirmation",
+        action="store_true",
+        help="take every signal without option confirmation",
+    )
+    sbt.add_argument("--capital", type=float, default=100_000.0, help="starting capital")
+    sbt.add_argument(
+        "--cost-bps", type=float, default=2.0, help="round-trip transaction cost in basis points"
+    )
+    sbt.add_argument(
+        "--trades", type=int, default=0, metavar="N", help="also print the last N trades"
+    )
+    sbt.add_argument("--json", action="store_true", help="emit the full report as JSON")
+    sbt.add_argument("--no-refresh", action="store_true", help="use cached prices only")
+    sbt.set_defaults(func=cmd_strategy_backtest)
+
+    terminal = sub.add_parser(
+        "terminal",
+        help="chat with an AI that drives the engine's tools (bring your own key)",
+        description=(
+            "An AI research terminal. You supply the LLM API key; the model answers "
+            "by calling this engine's deterministic tools and relaying what they "
+            "returned. It is not permitted to compute or recall a number itself, "
+            "and every call it makes is printed above its answer so you can check "
+            "any figure it quotes."
+        ),
+    )
+    terminal.add_argument("question", nargs="*", help="ask once and exit; omit for a REPL")
+    terminal.add_argument(
+        "--provider", default="openai", help="openai | anthropic | openrouter | groq"
+    )
+    terminal.add_argument("--model", help="override the provider's default model")
+    terminal.add_argument("--api-key", help="your LLM API key (or set LLM_API_KEY)")
+    terminal.set_defaults(func=cmd_terminal)
 
     factors = sub.add_parser(
         "factors",

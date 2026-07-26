@@ -46,13 +46,24 @@ jobs:
 
       - name: Refresh context caches (news, on-chain, fundamentals)
         # Context is optional and best-effort — a failed feed must never block
-        # the scan. Keys are OPTIONAL: every one below degrades gracefully when
-        # its secret is unset (the engine gates on a truthy value, so an absent
-        # secret is an empty string is "off"). Add a key at repo Settings ->
-        # Secrets and variables -> Actions and it activates here automatically —
-        # no edit to this file needed.
+        # the scan, so this step is allowed to fail and the job continues. It is
+        # NOT allowed to fail silently: `--strict` exits non-zero when a whole
+        # data kind came back with zero items, and the "Fail if the scrape
+        # degraded" step at the end turns that into a red build.
+        #
+        # That combination is the fix for a real month-long outage. Binance
+        # answers HTTP 451 to every request from a datacenter IP, so the runner
+        # collected no futures positioning data at all — while this job reported
+        # success every single day, because a dead feed raises nothing and the
+        # health record was an aggregate that one live feed kept green.
+        #
+        # Keys are OPTIONAL: every one below degrades gracefully when its secret
+        # is unset (the engine gates on a truthy value, so an absent secret is
+        # an empty string is "off"). Add a key at repo Settings -> Secrets and
+        # variables -> Actions and it activates here automatically.
+        id: ingest
         continue-on-error: true
-        run: python -m alpha_engine.cli.main ingest BTC ETH SOL AAPL MSFT GOOGL NVDA
+        run: python -m alpha_engine.cli.main ingest BTC ETH SOL AAPL MSFT GOOGL NVDA --strict
         env:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }} # higher crypto limits
           FINNHUB_API_KEY: ${{ secrets.FINNHUB_API_KEY }} # company news
@@ -69,17 +80,55 @@ jobs:
           COINGECKO_API_KEY: ${{ secrets.COINGECKO_API_KEY }}
 
       - name: Source health (informational — never blocks the commit)
+        # Informational only in CI, and deliberately so: the runner starts with
+        # an empty data/ every time, so health has no history here and cannot
+        # detect the multi-day decay it is designed for. That job belongs to a
+        # long-lived install. The per-run signal is `ingest --strict` above.
         run: python -m alpha_engine.cli.main health || true
 
-      - name: Commit the day's signals back to the repo
+      - name: Commit the day's signals and report back to the repo
+        # Runs even when the scrape degraded. Partial data is still the day's
+        # record, and losing it would punish the operator twice for one broken
+        # feed. The build still goes red at the next step.
+        if: always()
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add data/signals/signals.jsonl
+          # Stage whichever artefacts exist. `if: always()` means this step also
+          # runs when the batch scan crashed before writing its report, and a
+          # bare `git add` on a missing path aborts the whole step.
+          for artefact in data/signals/signals.jsonl data/reports/daily.json; do
+            if [ -f "$artefact" ]; then git add "$artefact"; fi
+          done
           if git diff --cached --quiet; then
             echo "no new signals to commit"
           else
             # [skip ci] so this data commit doesn't trigger the test workflow.
             git commit -m "data: daily signals $(date -u +%Y-%m-%d) [skip ci]"
-            git push
+            # The scheduled run races nothing, but a manual dispatch can land
+            # while another commit is being pushed. Rebase and retry rather than
+            # losing the day's data to a non-fast-forward.
+            for attempt in 1 2 3; do
+              if git push; then exit 0; fi
+              # No ref is named here on purpose: actions/checkout sets the
+              # branch to track its own origin/<branch>, so a bare pull follows
+              # whichever ref this run was dispatched on. Hardcoding main would
+              # rebase a branch run onto the wrong history.
+              echo "push rejected (attempt $attempt); rebasing on the tracked upstream"
+              git pull --rebase --autostash || exit 1
+            done
+            echo "::error::could not push the day's signals after 3 attempts"
+            exit 1
           fi
+
+      - name: Fail if the scrape degraded
+        # The last line of defence against a green build with no data. Without
+        # this the whole point of --strict is lost: the step above is
+        # continue-on-error, so its failure would otherwise vanish.
+        if: steps.ingest.outcome == 'failure'
+        run: |
+          echo "::error::Context ingestion reported a data kind with zero items."
+          echo "The signals for today were still committed, but at least one"
+          echo "source produced nothing. Check the 'Refresh context caches' step"
+          echo "for lines starting with EMPTY or WARNING."
+          exit 1

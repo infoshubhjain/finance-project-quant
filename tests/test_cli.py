@@ -137,3 +137,98 @@ def test_cmd_report_short_history_fails_cleanly(monkeypatch, capsys, tmp_path):
     args = cli.build_parser().parse_args(["report", "BTC"])
     assert args.func(args) == 1  # clean error exit, not a traceback
     assert "60" in capsys.readouterr().err
+
+
+# --- strategy + terminal commands --------------------------------------------
+
+
+def test_new_subcommands_parse_and_route():
+    parser = cli.build_parser()
+    for argv, handler in [
+        (["strategies"], cli.cmd_strategies),
+        (["strategy-backtest", "BTC", "--strategy", "SMACrossover"], cli.cmd_strategy_backtest),
+        (["terminal"], cli.cmd_terminal),
+    ]:
+        assert parser.parse_args(argv).func is handler
+
+
+def test_strategy_backtest_defaults():
+    args = cli.build_parser().parse_args(["strategy-backtest", "BTC", "--strategy", "SMACrossover"])
+    assert args.days == 365
+    assert args.trade_on == "underlying"
+    assert args.no_confirmation is False
+    assert args.capital == 100_000.0
+    assert args.cost_bps == 2.0
+
+
+def test_cmd_strategies_lists_the_builtins(capsys):
+    assert cli.cmd_strategies(cli.build_parser().parse_args(["strategies"])) == 0
+    out = capsys.readouterr().out
+    assert "SMACrossover" in out
+    assert "RSIReversal" in out
+    assert "fast_length=9" in out  # default params are shown
+
+
+def test_cmd_strategy_backtest_end_to_end(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "_load_series", lambda *a, **k: _series())
+    monkeypatch.chdir(tmp_path)
+
+    args = cli.build_parser().parse_args(
+        ["strategy-backtest", "BTC", "--strategy", "SMACrossover", "--json"]
+    )
+    assert args.func(args) == 0
+
+    report = json.loads(capsys.readouterr().out)
+    assert report["strategy"] == "SMA Crossover"
+    assert report["lookahead_violations"] == []
+    assert "sharpe" in report["metrics"]
+    assert report["disclaimer"]
+
+
+def test_cmd_strategy_backtest_param_overrides_are_typed(monkeypatch, capsys, tmp_path):
+    """--param fast_length=4 must reach the strategy as int 4, not "4"."""
+    monkeypatch.setattr(cli, "_load_series", lambda *a, **k: _series())
+    monkeypatch.chdir(tmp_path)
+
+    args = cli.build_parser().parse_args(
+        [
+            "strategy-backtest",
+            "BTC",
+            "--strategy",
+            "SMACrossover",
+            "--param",
+            "fast_length=4",
+            "--param",
+            "slow_length=30",
+            "--json",
+        ]
+    )
+    assert args.func(args) == 0
+    report = json.loads(capsys.readouterr().out)
+    assert report["params"] == {"fast_length": 4, "slow_length": 30}
+
+
+def test_cmd_strategy_backtest_rejects_a_malformed_param(monkeypatch, tmp_path):
+    monkeypatch.setattr(cli, "_load_series", lambda *a, **k: _series())
+    monkeypatch.chdir(tmp_path)
+    args = cli.build_parser().parse_args(
+        ["strategy-backtest", "BTC", "--strategy", "SMACrossover", "--param", "nonsense"]
+    )
+    assert args.func(args) == 2
+
+
+def test_cmd_strategy_backtest_unknown_strategy_lists_the_known_ones(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(cli, "_load_series", lambda *a, **k: _series())
+    monkeypatch.chdir(tmp_path)
+    args = cli.build_parser().parse_args(["strategy-backtest", "BTC", "--strategy", "Nope"])
+    assert args.func(args) == 1
+    assert "SMACrossover" in capsys.readouterr().err
+
+
+def test_cmd_terminal_without_a_key_explains_how_to_bring_one(monkeypatch, capsys):
+    monkeypatch.delenv("LLM_API_KEY", raising=False)
+    args = cli.build_parser().parse_args(["terminal", "hello"])
+    assert args.func(args) == 2
+    err = capsys.readouterr().err
+    assert "uses YOUR key" in err
+    assert "platform.openai.com" in err  # tells them where to get one

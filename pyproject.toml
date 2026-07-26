@@ -58,6 +58,27 @@ testpaths = ["tests"]
 line-length = 100
 target-version = "py310"
 
+[tool.ruff.lint]
+# Pin the rule set explicitly instead of inheriting ruff's default.
+#
+# `dev` asks for `ruff>=0.4`, so CI always installs the newest ruff. When 0.16
+# widened the default selection, 62 findings appeared across files nobody had
+# touched and CI went red for three consecutive runs (2026-07-25) with no commit
+# responsible. Pinning the ruff *version* would only move the problem to the next
+# upgrade; naming the rules makes the gate reproducible forever.
+#
+# This is ruff's historical default — the rules this codebase was written and
+# reviewed against. Widening it is a deliberate, separate piece of work: turn on
+# one family, fix what it finds, commit. Do not widen it in a feature branch.
+select = ["E4", "E7", "E9", "F"]
+
+[tool.ruff.format]
+# Ruff 0.16 also began formatting python blocks inside markdown. The comment
+# columns in HOW_IT_WORKS.md and docs/analyzer-guide.md are aligned by hand
+# because they are teaching material — the formatter collapses that alignment
+# and makes the tables harder to read, which is the opposite of the point.
+exclude = ["*.md"]
+
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "standard"

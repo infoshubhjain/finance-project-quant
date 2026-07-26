@@ -250,6 +250,7 @@ def refresh_context(
     from alpha_engine.analyzers.sentiment import score_news
     from alpha_engine.ingestion import (
         binance_futures,
+        bybit_futures,
         calendar_file,
         coingecko,
         finnhub_news,
@@ -264,25 +265,46 @@ def refresh_context(
     if force:
         wanted = {"news", "onchain", "fundamentals", "events"}
 
-    def run(kind: str, fetch: Callable[[], int], enabled: bool = True) -> None:
+    def run(kind: str, fetch: Callable[[], int | dict[str, int]], enabled: bool = True) -> None:
         """Run one source's refresh, isolate its failure, and record its health.
 
         The health record is the part that matters over months. Every adapter
         here degrades to empty rather than raising, so without this a source
         that broke in March looks identical to a quiet Tuesday until someone
         notices the signals got worse. `items` is what separates them.
+
+        A fetcher may return a plain count, or a `{feed: count}` map when the
+        kind has several independent feeds. **Return the map whenever it can.**
+        An aggregate hides a dead feed behind a live one, and that is not a
+        hypothetical: `onchain` recorded a single total, so when Binance began
+        answering HTTP 451 to every request from CI, CoinGecko's one dominance
+        reading kept the total at "1 item, ok" and six dead fetches stayed
+        invisible for a month of green builds.
+
+        Only feeds that were actually *attempted* appear in the map. A feed that
+        was never tried must not be recorded, or an unused fallback would age
+        into a false "degraded" alarm and teach you to ignore the health table.
         """
         if kind not in wanted or not enabled:
             report.skipped_fresh.append(kind)
             return
         try:
-            count = fetch()
-            report.refreshed.append(kind)
-            report.item_counts[kind] = count
-            health.record(kind, items=count)
+            result = fetch()
         except Exception as e:  # noqa: BLE001 - one dead source is not a failed run
             report.failed[kind] = str(e)
             health.record(kind, error=f"{type(e).__name__}: {e}")
+            return
+
+        report.refreshed.append(kind)
+        if isinstance(result, dict):
+            for feed, count in sorted(result.items()):
+                report.item_counts[f"{kind}.{feed}"] = count
+                health.record(f"{kind}.{feed}", items=count)
+            total = sum(result.values())
+        else:
+            total = result
+        report.item_counts[kind] = total
+        health.record(kind, items=total)
 
     def _news() -> int:
         fetched = rss.fetch_all(cache=cache)
@@ -312,19 +334,46 @@ def refresh_context(
         manual = calendar_file.load_calendar(cache=cache)
         return len(fomc) + len(manual)
 
-    def _onchain() -> int:
-        count = 0
+    def _onchain() -> dict[str, int]:
+        """Per-feed counts, because the aggregate is what hid the CI outage.
+
+        Binance is tried first (deeper market, longer history) and Bybit is the
+        fallback. Binance answers HTTP 451 to every request from a datacenter
+        IP, which is exactly where the scheduled scan runs, so on CI the
+        fallback is the one that actually works — while on a laptop Binance
+        answers fine and Bybit is never touched.
+
+        The fallback *latches*. A geo-block is a property of the host, not of
+        the asset: once Binance has returned nothing for one symbol it will for
+        all of them, so re-probing per asset would spend six doomed requests
+        every single run to learn the same fact.
+        """
+        counts: dict[str, int] = {}
+        use_binance = True
+
         for asset in assets:
             if binance_futures.supports(asset):
-                count += len(binance_futures.fetch_all(asset, cache=cache))
+                if use_binance:
+                    fetched = len(binance_futures.fetch_all(asset, cache=cache))
+                    counts["binance_futures"] = counts.get("binance_futures", 0) + fetched
+                    if fetched == 0:
+                        use_binance = False
+                if not use_binance and bybit_futures.supports(asset):
+                    counts["bybit_futures"] = counts.get("bybit_futures", 0) + len(
+                        bybit_futures.fetch_all(asset, cache=cache)
+                    )
                 if glassnode.has_key():
-                    count += len(glassnode.fetch_all(asset, cache=cache))
-        if coingecko.fetch_btc_dominance(cache=cache) is not None:
-            count += 1
-        return count
+                    counts["glassnode"] = counts.get("glassnode", 0) + len(
+                        glassnode.fetch_all(asset, cache=cache)
+                    )
 
-    def _fundamentals() -> int:
-        return sum(len(fmp.fetch_fundamentals(a, cache=cache)) for a in assets)
+        counts["coingecko_dominance"] = (
+            1 if coingecko.fetch_btc_dominance(cache=cache) is not None else 0
+        )
+        return counts
+
+    def _fundamentals() -> dict[str, int]:
+        return {"fmp": sum(len(fmp.fetch_fundamentals(a, cache=cache)) for a in assets)}
 
     run("news", _news)
     run("events", _events)

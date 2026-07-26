@@ -55,8 +55,32 @@ _RECENT = 9  # funding prints 3x/day, so 9 observations is ~3 days
 
 
 def _by_metric(obs: list[OnChainObservation], metric: str) -> list[OnChainObservation]:
-    """Observations for one metric, oldest first."""
-    return sorted((o for o in obs if o.metric == metric), key=lambda o: o.ts)
+    """Observations for one metric, oldest first, from a SINGLE source.
+
+    The single-source rule is not tidiness, it is correctness. Two adapters can
+    report the same metric in different units — Binance and Bybit both publish
+    open interest, one historically in USD notional and one in base coin — and
+    this analyzer reads OI as `last / first`. A series holding both units has a
+    step change of several orders of magnitude at the switchover, which is
+    indistinguishable from a colossal genuine build-up and would flip the
+    conviction multiplier on fabricated evidence.
+
+    The adapters are also kept unit-consistent, but that is a convention two
+    files must agree on and conventions rot. This is the guard that holds
+    regardless: when several sources have written the same metric, the one with
+    the most recent observation wins and the others are ignored entirely.
+    Failing over to a new exchange therefore costs history, never correctness.
+    """
+    matching = [o for o in obs if o.metric == metric]
+    if not matching:
+        return []
+
+    sources = {o.source for o in matching}
+    if len(sources) > 1:
+        freshest = max(matching, key=lambda o: o.ts).source
+        matching = [o for o in matching if o.source == freshest]
+
+    return sorted(matching, key=lambda o: o.ts)
 
 
 def _mean(xs: list[float]) -> float:
