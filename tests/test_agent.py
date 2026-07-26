@@ -402,3 +402,54 @@ def test_all_providers_declare_a_known_dialect():
     for provider in providers.PROVIDERS.values():
         assert isinstance(provider, Provider)
         assert provider.style in ("openai", "anthropic")
+
+
+# --------------------------------------------------------------------------
+# HTTP status classification
+#
+# Everything used to return 502. A mistyped provider or model name is the
+# caller's mistake, and answering "Bad Gateway" sends them looking for an
+# outage that is not happening. Found by testing against a live OpenRouter key.
+# --------------------------------------------------------------------------
+
+
+def test_an_unknown_provider_is_a_client_error():
+    reply = agent.ask("hi", api_key=KEY, provider_key="notaprovider")
+    assert reply.error_status == 400
+
+
+def test_a_missing_key_is_a_client_error():
+    with pytest.raises(ProviderError) as e:
+        providers.chat(resolve("openai"), "", "m", [{"role": "user", "content": "hi"}])
+    assert e.value.http_status == 400
+
+
+@pytest.mark.parametrize(
+    ("upstream", "expected"),
+    [
+        (400, 400),  # bad model name — the caller's to fix
+        (401, 401),  # bad key — the caller's
+        (403, 403),
+        (404, 404),
+        (429, 429),  # surfaced so a client can back off
+        (500, 502),  # a genuine upstream failure
+        (503, 502),
+    ],
+)
+def test_upstream_status_is_classified_not_flattened(scripted, upstream, expected):
+    scripted.queue.append(FakeResponse({"error": {"message": "x"}}, status_code=upstream))
+    assert agent.ask("hi", api_key=KEY).error_status == expected
+
+
+def test_an_unreachable_endpoint_is_a_gateway_error(monkeypatch):
+    def explode(*a, **kw):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr(net, "post", explode)
+    assert agent.ask("hi", api_key=KEY).error_status == 502
+
+
+def test_a_successful_reply_carries_no_error_status_meaning(scripted):
+    scripted.queue.append(FakeResponse(_openai_turn(text="ok")))
+    reply = agent.ask("hi", api_key=KEY)
+    assert reply.error is None

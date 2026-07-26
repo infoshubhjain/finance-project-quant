@@ -113,7 +113,18 @@ ANTHROPIC_VERSION = "2023-06-01"
 
 class ProviderError(RuntimeError):
     """A provider call failed in a way the user needs to see (bad key, no
-    credit, unknown model). Distinct from a bug in this code."""
+    credit, unknown model). Distinct from a bug in this code.
+
+    `http_status` is what an HTTP caller should be told, and it is NOT always
+    502. A mistyped provider name or a nonexistent model is the caller's
+    mistake; reporting those as Bad Gateway tells them the upstream is broken
+    and to retry later, when the fix is to correct the request. Only a genuine
+    upstream failure — unreachable host, 5xx — is a gateway error.
+    """
+
+    def __init__(self, message: str, http_status: int = 502) -> None:
+        super().__init__(message)
+        self.http_status = http_status
 
 
 @dataclass
@@ -161,7 +172,8 @@ def resolve(provider_key: str) -> Provider:
     provider = PROVIDERS.get((provider_key or "").lower())
     if provider is None:
         raise ProviderError(
-            f"unknown provider '{provider_key}'. Available: {', '.join(sorted(PROVIDERS))}"
+            f"unknown provider '{provider_key}'. Available: {', '.join(sorted(PROVIDERS))}",
+            http_status=400,
         )
 
     override = os.environ.get(API_BASE_ENV, "").strip()
@@ -253,7 +265,7 @@ def chat(
     leave them staring at nothing.
     """
     if not api_key:
-        raise ProviderError("no API key supplied")
+        raise ProviderError("no API key supplied", http_status=400)
 
     if provider.style == "anthropic":
         headers = {
@@ -285,7 +297,13 @@ def chat(
         raise ProviderError(f"could not reach {provider.label}: {redact(str(e))}") from e
 
     if resp.status_code >= 400:
-        raise ProviderError(_error_message(provider, resp))
+        # Pass the upstream's own classification through: a 401 was caused by
+        # the caller's key and a 400 by their model name, so both are the
+        # caller's to fix. 429 is worth surfacing verbatim so a client can back
+        # off rather than hammering.
+        passthrough = {400, 401, 403, 404, 429}
+        status = resp.status_code if resp.status_code in passthrough else 502
+        raise ProviderError(_error_message(provider, resp), http_status=status)
 
     try:
         data = resp.json()

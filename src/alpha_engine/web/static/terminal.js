@@ -110,48 +110,177 @@
     return box;
   }
 
-  /* Minimal, safe markdown: paragraphs, bullet lists, `inline code` and fenced
-     blocks. Deliberately not a markdown library — every branch here builds DOM
-     nodes with textContent, so there is no path from model output to HTML. */
-  function renderProse(text, into) {
-    var blocks = String(text || "").split(/\n{2,}/);
-    blocks.forEach(function (block) {
-      var trimmed = block.trim();
-      if (!trimmed) return;
+  /* Safe markdown: headings, paragraphs, ordered and bullet lists, bold,
+     italics, `inline code` and fenced blocks.
 
-      if (trimmed.indexOf("```") === 0) {
-        var body = trimmed.replace(/^```[^\n]*\n?/, "").replace(/```$/, "");
-        var pre = el("pre", "code-block");
-        pre.appendChild(el("code", null, body));
-        into.appendChild(pre);
-        return;
-      }
+     Deliberately not a markdown library — every branch builds DOM nodes and
+     sets textContent, so there is no path from model output to HTML. That is
+     the XSS defence on a page where the user has pasted an API key, and it is
+     why adding a library here would be a downgrade rather than an upgrade.
 
-      var lines = trimmed.split("\n");
-      var isList = lines.every(function (l) { return /^\s*([-*•]|\d+[.)])\s+/.test(l); });
-      if (isList) {
-        var ul = el("ul", "term-list");
-        lines.forEach(function (l) {
-          ul.appendChild(inlineInto(el("li"), l.replace(/^\s*([-*•]|\d+[.)])\s+/, "")));
-        });
-        into.appendChild(ul);
-        return;
-      }
+     The scope is set by what models actually emit, not by the spec. Testing
+     against a live model showed `**bold**` and `### headings` rendering as
+     literal asterisks and hashes, which made every answer look broken — those
+     two are the most common formatting in an LLM reply and were the ones
+     missing. */
+  var BULLET = /^\s*[-*•]\s+/;
+  var NUMBER = /^\s*\d+[.)]\s+/;
+  var HEADING = /^(#{1,6})\s+(.*)$/;
+  var RULE = /^\s*([-*_])\1{2,}\s*$/;
 
-      into.appendChild(inlineInto(el("p"), trimmed));
-    });
+  function indentOf(line) {
+    return line.length - line.replace(/^\s*/, "").length;
   }
 
-  function inlineInto(node, text) {
-    // Split on `code` spans; everything else is plain text.
-    String(text).split(/(`[^`]+`)/).forEach(function (part) {
-      if (!part) return;
-      if (part.charAt(0) === "`" && part.charAt(part.length - 1) === "`" && part.length > 2) {
-        node.appendChild(el("code", null, part.slice(1, -1)));
-      } else {
-        node.appendChild(document.createTextNode(part));
+  /* One list, plus any lists nested under its items. Returns the next
+     unconsumed line index.
+
+     Nesting is not decoration. A model answering "list the top 3 sources"
+     writes a numbered item per source with indented bullets of detail beneath
+     it; treating those bullets as top-level ends the <ol> after every item, so
+     the numbering renders "1. … 1. … 1." and the answer looks broken. Indent
+     is the only signal available and it is the one markdown actually uses. */
+  function renderList(lines, i, baseIndent, into) {
+    var numbered = NUMBER.test(lines[i]);
+    var marker = numbered ? NUMBER : BULLET;
+    var list = el(numbered ? "ol" : "ul", "term-list");
+    var lastItem = null;
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      // A blank line between items is a "loose list" in markdown — still ONE
+      // list. Breaking here ended the <ol> after every item, so a model that
+      // spaces its items out rendered "1. … 1. … 1." instead of 1, 2, 3.
+      // Look past the blanks and only stop if what follows is not an item.
+      if (!line.trim()) {
+        var j = i;
+        while (j < lines.length && !lines[j].trim()) j++;
+        if (
+          j < lines.length &&
+          (NUMBER.test(lines[j]) || BULLET.test(lines[j])) &&
+          indentOf(lines[j]) >= baseIndent
+        ) {
+          i = j;
+          continue;
+        }
+        break;
       }
-    });
+
+      var isItem = NUMBER.test(line) || BULLET.test(line);
+      if (!isItem) break;
+
+      var indent = indentOf(line);
+      if (indent > baseIndent && lastItem) {
+        i = renderList(lines, i, indent, lastItem); // deeper: nest under the item
+        continue;
+      }
+      if (indent < baseIndent) break; // shallower: belongs to an outer list
+      if (marker.test(line) === false) break; // same level, different kind
+
+      lastItem = inlineInto(el("li"), line.replace(marker, ""));
+      list.appendChild(lastItem);
+      i++;
+    }
+
+    into.appendChild(list);
+    return i;
+  }
+
+  /* Group lines into blocks, then render each.
+
+     Line-driven rather than regex-preprocessed. The first attempt inserted
+     blank lines before list markers to force new blocks, which also split
+     *consecutive* items — every bullet became its own list and every numbered
+     item restarted at 1. Walking the lines and grouping runs of the same kind
+     is both simpler and correct, and it handles the real problem (models do not
+     reliably leave a blank line before a heading or a list) without touching
+     items that already belong together. */
+  function renderProse(text, into) {
+    var lines = String(text || "").replace(/\r/g, "").split("\n");
+    var i = 0;
+
+    while (i < lines.length) {
+      var line = lines[i];
+
+      if (!line.trim()) { i++; continue; }
+
+      if (line.trim().indexOf("```") === 0) {
+        var body = [];
+        i++;
+        while (i < lines.length && lines[i].trim().indexOf("```") !== 0) body.push(lines[i++]);
+        i++; // closing fence
+        var pre = el("pre", "code-block");
+        pre.appendChild(el("code", null, body.join("\n")));
+        into.appendChild(pre);
+        continue;
+      }
+
+      if (RULE.test(line)) { into.appendChild(el("hr", "term-rule")); i++; continue; }
+
+      var heading = line.match(HEADING);
+      if (heading) {
+        // h4/h5 regardless of depth: these sit inside a chat turn, and an <h1>
+        // from a model would outrank the page's own title.
+        var tag = heading[1].length <= 2 ? "h4" : "h5";
+        into.appendChild(inlineInto(el(tag, "term-heading"), heading[2]));
+        i++;
+        continue;
+      }
+
+      if (NUMBER.test(line) || BULLET.test(line)) {
+        i = renderList(lines, i, indentOf(line), into);
+        continue;
+      }
+
+      // A run of plain lines becomes one paragraph, keeping its single newlines
+      // as <br>: models often emit a label per line, and collapsing them runs
+      // the answer into one wall of text.
+      var para = el("p");
+      var first = true;
+      while (
+        i < lines.length && lines[i].trim() &&
+        !HEADING.test(lines[i]) && !BULLET.test(lines[i]) &&
+        !NUMBER.test(lines[i]) && !RULE.test(lines[i]) &&
+        lines[i].trim().indexOf("```") !== 0
+      ) {
+        if (!first) para.appendChild(document.createElement("br"));
+        inlineInto(para, lines[i]);
+        first = false;
+        i++;
+      }
+      into.appendChild(para);
+    }
+  }
+
+  /* Inline spans, applied in one pass so a bold label containing code still
+     renders both. Order matters: code first, so `**` inside a code span stays
+     literal. */
+  var INLINE = /(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|(?:^|\s)\*[^*\n]+\*(?=\s|$|[.,;:!?)]))/;
+
+  function inlineInto(node, text) {
+    String(text)
+      .split(INLINE)
+      .forEach(function (part) {
+        if (!part) return;
+        var lead = "";
+        // The italic arm captures a leading space; preserve it as text.
+        if (/^\s\*[^*]/.test(part)) {
+          lead = part.charAt(0);
+          part = part.slice(1);
+        }
+        if (lead) node.appendChild(document.createTextNode(lead));
+
+        if (part.length > 2 && part.charAt(0) === "`" && part.slice(-1) === "`") {
+          node.appendChild(el("code", null, part.slice(1, -1)));
+        } else if (part.length > 4 && (part.indexOf("**") === 0 || part.indexOf("__") === 0)) {
+          node.appendChild(el("strong", null, part.slice(2, -2)));
+        } else if (part.length > 2 && part.charAt(0) === "*" && part.slice(-1) === "*") {
+          node.appendChild(el("em", null, part.slice(1, -1)));
+        } else {
+          node.appendChild(document.createTextNode(part));
+        }
+      });
     return node;
   }
 
@@ -350,6 +479,16 @@
     autosize();
     input.focus();
   });
+
+  /* Test seam. renderProse builds DOM and the only honest way to check it is
+     to run it in a browser and inspect what the page ends up containing — so
+     tests/test_browser.py needs a handle on it. Exposing one function is a
+     smaller price than the alternatives: duplicating the renderer in a shim
+     (which then tests the copy, not the code) or asserting about the source
+     text (which cannot see nesting or escaping at all).
+
+     Read-only and side-effect free: it renders into a node the caller owns. */
+  window.__test_render = renderProse;
 
   loadProviders().then(function () { input.focus(); });
 })();

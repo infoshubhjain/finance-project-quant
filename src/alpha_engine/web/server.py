@@ -317,9 +317,11 @@ class AppHandler(BaseHTTPRequestHandler):
             history=body.get("history") or None,
         )
         payload = reply.to_dict()
-        self._send_json(
-            payload, status=HTTPStatus.OK if not reply.error else HTTPStatus.BAD_GATEWAY
-        )
+        # Not a blanket 502. A mistyped provider or model name is the caller's
+        # to fix, and answering "Bad Gateway" sends them looking for an outage
+        # that is not happening. `error_status` carries the upstream's own
+        # classification through; 502 is reserved for a genuine gateway failure.
+        self._send_json(payload, status=HTTPStatus.OK if not reply.error else reply.error_status)
 
     # -- responses ----------------------------------------------------------
 

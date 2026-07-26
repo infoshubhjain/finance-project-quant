@@ -209,8 +209,22 @@ h1 { font-size: 25px; font-weight: 700; letter-spacing: -0.03em; }
 .kpi-spark { margin-top: 10px; height: 34px; }
 
 /* ---- regime / risk hero -------------------------------------------------- */
-.hero-grid { display: grid; grid-template-columns: 1.15fr 1fr 1fr; gap: 22px; align-items: center; }
-@media (max-width: 900px) { .hero-grid { grid-template-columns: 1fr; gap: 18px; } }
+/* `minmax(0, …)` rather than a bare `fr`, and `min-width: 0` on the children.
+   A bare `1fr` is `minmax(auto, 1fr)`, and `auto` means "at least as wide as my
+   content" — so the correlation matrix (seven ticker columns) forced its track
+   wider than the viewport and the `overflow-x: auto` inside it never engaged.
+   The page then scrolled sideways by 275px on a 390px screen.
+
+   This only showed up once the price cache was warm enough for the matrix to
+   render at all, which is why it survived every earlier responsive check. */
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 22px;
+  align-items: center;
+}
+.hero-grid > * { min-width: 0; }
+@media (max-width: 900px) { .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; } }
 .regime { display: flex; align-items: center; gap: 16px; }
 .regime-badge {
   width: 62px; height: 62px; border-radius: 16px; flex: none;
@@ -571,6 +585,14 @@ pre.code-block code { font: inherit; background: none; padding: 0; }
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px;
 }
 .term-list { margin: 0 0 10px; padding-left: 20px; display: grid; gap: 5px; max-width: 74ch; }
+.term-body strong { color: var(--text); font-weight: 650; }
+.term-body em { font-style: italic; color: var(--text-2); }
+.term-rule { border: none; border-top: 1px solid var(--line); margin: 14px 0; }
+.term-heading {
+  font: 650 13px/1.4 var(--sans); color: var(--text);
+  margin: 14px 0 6px; letter-spacing: -0.01em;
+}
+.term-body > .term-heading:first-child { margin-top: 0; }
 
 .term-user .term-body {
   background: var(--surface-2); border: 1px solid var(--line);

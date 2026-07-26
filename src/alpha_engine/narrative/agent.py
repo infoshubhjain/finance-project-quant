@@ -116,6 +116,9 @@ class AgentReply:
     tool_calls: list[ToolInvocation] = field(default_factory=list)
     truncated: bool = False
     error: str | None = None
+    #: What an HTTP caller should be told. 400 for a malformed request, 401 for
+    #: a bad key, 502 only for a genuine upstream failure.
+    error_status: int = 502
     disclaimer: str = DISCLAIMER
 
     def to_dict(self) -> dict[str, Any]:
@@ -169,7 +172,12 @@ def ask(
         provider = resolve(provider_key)
     except ProviderError as e:
         return AgentReply(
-            answer="", provider=provider_key, model=model or "", steps=0, error=str(e)
+            answer="",
+            provider=provider_key,
+            model=model or "",
+            steps=0,
+            error=str(e),
+            error_status=e.http_status,
         )
 
     chosen_model = model or provider.default_model
@@ -197,6 +205,7 @@ def ask(
                 steps=step - 1,
                 tool_calls=invocations,
                 error=str(e),
+                error_status=e.http_status,
             )
 
         if not turn.tool_calls:

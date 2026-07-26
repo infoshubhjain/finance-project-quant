@@ -190,3 +190,124 @@ def test_both_themes_keep_text_visible(browser, server):
             assert not invisible, f"{theme}: text the same colour as its background: {invisible}"
         finally:
             ctx.close()
+
+
+# --------------------------------------------------------------------------
+# The markdown renderer
+#
+# Tested through a real browser because it is DOM-building code — the thing that
+# matters is what the page ends up containing, not what a shim thinks it built.
+#
+# Every case here is a shape a live model actually emitted during testing against
+# OpenRouter, and every one of them rendered wrong at some point: `**bold**` and
+# `### headings` came out as literal punctuation, then a fix for that split every
+# list so numbering restarted at 1, then blank lines between items split them
+# again. Formatting is most of what an LLM reply is, so a broken renderer makes
+# every answer look broken.
+# --------------------------------------------------------------------------
+
+
+def _render(page, markdown: str):
+    """Run the page's own renderProse over `markdown` and return the DOM shape."""
+    return page.evaluate(
+        """(md) => {
+            const host = document.createElement('div');
+            document.body.appendChild(host);
+            // renderProse lives in terminal.js's IIFE, so drive it the way the
+            // app does: through a fake reply rendered into the log.
+            window.__test_render(md, host);
+            const shape = {
+                html: host.innerHTML,
+                text: host.innerText,
+                strong: host.querySelectorAll('strong').length,
+                em: host.querySelectorAll('em').length,
+                code: host.querySelectorAll('code').length,
+                headings: host.querySelectorAll('h4, h5').length,
+                topLists: host.querySelectorAll(':scope > ol, :scope > ul').length,
+                nested: host.querySelectorAll('li ol, li ul').length,
+                olCounts: [...host.querySelectorAll('ol')].map(o => o.children.length),
+                rules: host.querySelectorAll('hr').length,
+                injected: host.querySelectorAll('img, script, iframe, svg, object').length,
+            };
+            host.remove();
+            return shape;
+        }""",
+        markdown,
+    )
+
+
+@pytest.fixture()
+def rendered(browser, server):
+    ctx = browser.new_context(viewport={"width": 1200, "height": 800})
+    page = ctx.new_page()
+    page.goto(server + "/terminal", wait_until="networkidle")
+    page.wait_for_timeout(300)
+    if not page.evaluate("typeof window.__test_render === 'function'"):
+        ctx.close()
+        pytest.skip("terminal.js does not expose __test_render")
+    yield page
+    ctx.close()
+
+
+def test_bold_and_italics_render_as_elements(rendered):
+    shape = _render(rendered, "**Direction**: Bullish and *research only*.")
+    assert shape["strong"] == 1
+    assert shape["em"] == 1
+    assert "**" not in shape["text"]
+
+
+def test_headings_render_even_without_a_blank_line_before_them(rendered):
+    """Models do not reliably leave a blank line before a heading."""
+    shape = _render(rendered, "Some text\n### Contributing Factors\nmore text")
+    assert shape["headings"] == 1
+    assert "###" not in shape["text"]
+
+
+def test_a_tight_numbered_list_is_one_list(rendered):
+    shape = _render(rendered, "1. A\n2. B\n3. C")
+    assert shape["olCounts"] == [3]
+
+
+def test_a_loose_numbered_list_is_still_one_list(rendered):
+    """Blank lines between items are a 'loose list' in markdown, not three
+    lists. Splitting them made the numbering render 1. 1. 1."""
+    shape = _render(rendered, "1. A\n\n2. B\n\n3. C")
+    assert shape["olCounts"] == [3]
+
+
+def test_indented_bullets_nest_under_their_numbered_item(rendered):
+    shape = _render(
+        rendered,
+        "1. **Equity Trend**\n   - Direction: Bullish\n   - Weight: 0.61\n2. **RSI**\n   - Weight: 0.23",
+    )
+    assert shape["olCounts"] == [2], "the outer list must keep both items"
+    assert shape["nested"] == 2, "each item should carry its own sub-list"
+
+
+def test_a_list_followed_by_prose_ends_the_list(rendered):
+    shape = _render(rendered, "Intro:\n1. A\n2. B\n\nClosing thought.")
+    assert shape["olCounts"] == [2]
+    assert "Closing thought." in shape["text"]
+
+
+def test_inline_code_and_fenced_blocks_both_render(rendered):
+    shape = _render(rendered, "Use `rsi(14)`.\n\n```\nscan BTC\n```")
+    assert shape["code"] >= 2
+
+
+def test_a_horizontal_rule_renders(rendered):
+    assert _render(rendered, "before\n\n---\n\nafter")["rules"] == 1
+
+
+def test_model_output_can_never_inject_html(rendered):
+    """The XSS invariant, exercised through the real renderer rather than
+    asserted about the source: this is a page where the user pasted an API key."""
+    payload = "<img src=x onerror=alert(1)> and <script>alert(2)</script>"
+    shape = _render(rendered, payload)
+
+    # The right question is whether ELEMENTS were created, not whether the
+    # substring "onerror" appears — it appears escaped, as `&lt;img ... onerror`,
+    # which is the correct outcome: inert text, not an attribute.
+    assert shape["injected"] == 0, "model output created real DOM elements"
+    assert "&lt;" in shape["html"], "the markup should be escaped, not stripped"
+    assert "alert(1)" in shape["text"], "and still readable as text"
