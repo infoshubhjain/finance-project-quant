@@ -256,3 +256,71 @@ def test_summarize_outcomes_empty_is_honest_none():
     assert summary.total == 0
     assert summary.hit_rate is None
     assert summary.avg_realized_return is None
+
+
+# --- log parse memoisation ----------------------------------------------------
+#
+# The dashboard re-parsed the whole log through pydantic on every HTTP request.
+# Correct only because the log is append-only: unchanged (mtime, size) means
+# byte-identical content. A mutable file would need a content hash.
+
+
+def _log_with(root, n):
+    from alpha_engine.validation.recorder import SignalRecord
+
+    root.mkdir(parents=True, exist_ok=True)
+    rec = SignalRecord(record_id="a", signal=_signal(), entry_price=100.0)
+    (root / "signals.jsonl").write_text((rec.model_dump_json() + "\n") * n)
+    return root
+
+
+def test_repeated_reads_reuse_the_parse(tmp_path, monkeypatch):
+    from alpha_engine.validation import recorder
+
+    root = _log_with(tmp_path / "signals", 5)
+    parsed = {"n": 0}
+    real = recorder.SignalRecord.model_validate_json
+
+    def counting(line):
+        parsed["n"] += 1
+        return real(line)
+
+    monkeypatch.setattr(recorder.SignalRecord, "model_validate_json", counting)
+    recorder.read_records(root)
+    first = parsed["n"]
+    recorder.read_records(root)
+    assert parsed["n"] == first, "the second read must not re-parse"
+
+
+def test_appending_invalidates_the_cache(tmp_path):
+    from alpha_engine.validation import recorder
+
+    root = _log_with(tmp_path / "signals", 3)
+    assert len(recorder.read_records(root)) == 3
+
+    rec = recorder.SignalRecord(record_id="b", signal=_signal(), entry_price=101.0)
+    with (root / "signals.jsonl").open("a") as f:
+        f.write(rec.model_dump_json() + "\n")
+
+    assert len(recorder.read_records(root)) == 4
+
+
+def test_callers_cannot_mutate_another_callers_view(tmp_path):
+    """The cache hands out copies; a caller that pops from its list must not
+    shrink what the next caller sees."""
+    from alpha_engine.validation import recorder
+
+    root = _log_with(tmp_path / "signals", 3)
+    first = recorder.read_records(root)
+    first.pop()
+    assert len(recorder.read_records(root)) == 3
+
+
+def test_two_different_logs_do_not_share_a_cache_entry(tmp_path):
+    from alpha_engine.validation import recorder
+
+    a = _log_with(tmp_path / "a", 2)
+    b = _log_with(tmp_path / "b", 5)
+    assert len(recorder.read_records(a)) == 2
+    assert len(recorder.read_records(b)) == 5
+    assert len(recorder.read_records(a)) == 2

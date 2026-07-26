@@ -7,12 +7,14 @@ and the CLI's crypto fallback chain. No network, no keys.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 import pytest
 
 from alpha_engine.cache.interface import Cache, LocalStore
-from alpha_engine.cache.models import Interval
+from alpha_engine import net
+from alpha_engine.cache.models import Candle, Interval
 from alpha_engine.ingestion import binance, coingecko, coingecko_pro, oanda
 
 
@@ -247,3 +249,112 @@ def test_crypto_fallback_prefers_pro_with_key(tmp_path, monkeypatch):
     series = cli_main._fetch_crypto_daily("BTC", 90, _tmp_cache(tmp_path))
     assert calls == ["pro"]
     assert series.candles[0].close == 2.0
+
+
+# --- Yahoo rate-limit survival ------------------------------------------------
+#
+# Yahoo throttles by IP and answers HTTP 429. It is the only source for equity
+# prices and has no keyless alternative (Stooq now serves a JS proof-of-work
+# challenge at HTTP 200 on both its domains, checked 2026-07-26), so surviving
+# the throttle is the whole strategy.
+
+
+def test_yahoo_retries_a_429_instead_of_failing_the_scan(monkeypatch, tmp_path):
+    from alpha_engine.ingestion import yahoo
+
+    calls = {"n": 0}
+    good = {
+        "chart": {
+            "result": [
+                {
+                    "timestamp": [1717200000],
+                    "indicators": {
+                        "quote": [
+                            {
+                                "open": [1.0],
+                                "high": [2.0],
+                                "low": [0.5],
+                                "close": [1.5],
+                                "volume": [10],
+                            }
+                        ]
+                    },
+                }
+            ]
+        }
+    }
+
+    class Resp:
+        def __init__(self, code, payload):
+            self.status_code = code
+            self.headers = {"Retry-After": "0"}
+            self._p = payload
+            self.url = "x"
+
+        def json(self):
+            return self._p
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise net.HTTPStatusError(f"HTTP {self.status_code}")
+
+    def flaky(url, **kw):
+        calls["n"] += 1
+        return Resp(429, {}) if calls["n"] == 1 else Resp(200, good)
+
+    monkeypatch.setattr(net, "get", flaky)
+    monkeypatch.setattr("time.sleep", lambda s: None)
+
+    series = yahoo.fetch_daily("AAPL", days=5, cache=Cache(LocalStore(tmp_path)))
+    assert calls["n"] == 2, "a 429 must be retried, not surfaced as a failed scan"
+    assert len(series.candles) == 1
+
+
+def test_yahoo_records_health_on_success(monkeypatch, tmp_path):
+    """Price had no health record at all — the most important input in the
+    engine was the least observable."""
+    from alpha_engine import health
+    from alpha_engine.ingestion import yahoo
+
+    health_file = tmp_path / "h.json"
+    monkeypatch.setattr(health, "DEFAULT_PATH", health_file)
+    monkeypatch.setattr(
+        yahoo,
+        "_parse_chart",
+        lambda payload: [
+            Candle(ts=datetime(2026, 1, 1, tzinfo=timezone.utc), open=1, high=1, low=1, close=1)
+        ],
+    )
+
+    class OK:
+        status_code = 200
+        headers: dict = {}
+
+        def json(self):
+            return {}
+
+        def raise_for_status(self):
+            return None
+
+    monkeypatch.setattr(net, "get", lambda *a, **kw: OK())
+    yahoo.fetch_daily("AAPL", cache=Cache(LocalStore(tmp_path)))
+    assert "price.yahoo" in health.load_health(health_file).sources
+
+
+def test_yahoo_records_health_on_failure(monkeypatch, tmp_path):
+    from alpha_engine import health
+    from alpha_engine.ingestion import yahoo
+
+    health_file = tmp_path / "h.json"
+    monkeypatch.setattr(health, "DEFAULT_PATH", health_file)
+
+    def boom(*a, **kw):
+        raise net.HTTPStatusError("HTTP 429 for yahoo")
+
+    monkeypatch.setattr(net, "get", boom)
+    with pytest.raises(net.HTTPStatusError):
+        yahoo.fetch_daily("AAPL", cache=Cache(LocalStore(tmp_path)))
+
+    recorded = health.load_health(health_file).sources["price.yahoo"]
+    assert recorded.consecutive_errors == 1
+    assert "429" in (recorded.last_error or "")

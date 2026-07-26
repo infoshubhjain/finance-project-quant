@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timezone
+import threading
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -67,6 +68,24 @@ def record_signal(
     return record
 
 
+# Parsed-log cache, keyed by (path, mtime_ns, size).
+#
+# The dashboard rebuilt its payload from scratch on every HTTP request, which
+# meant re-reading and re-validating the whole log through pydantic each time.
+# At 73 records that is invisible; at a year of daily scans it is ~18k records
+# per request, and the page auto-refreshes every 60 seconds.
+#
+# Memoising is *exactly* correct here rather than a heuristic, and only because
+# the log is append-only: content that has neither changed size nor been
+# rewritten is byte-identical, so (mtime_ns, size) identifies it uniquely. A
+# mutable file would need a content hash and this would be a bug.
+#
+# Deliberately NOT cached: the outcome scoring built on top of these records,
+# which reads current prices and must stay fresh. Only the parse is reused.
+_PARSE_CACHE: dict[Path, tuple[tuple[int, int], list[SignalRecord]]] = {}
+_PARSE_LOCK = threading.Lock()
+
+
 def read_records(root: str | Path | None = None) -> list[SignalRecord]:
     """Load every recorded signal, oldest first. Reading never modifies the log.
 
@@ -78,12 +97,23 @@ def read_records(root: str | Path | None = None) -> list[SignalRecord]:
     is skipped with a loud warning instead of making the whole log — the
     project's compounding asset — unreadable. The bad line stays in the file
     untouched for forensics; append-only means we never rewrite it.
+
+    The parse is memoised on the file's (mtime, size); see `_PARSE_CACHE`.
+    Callers get a fresh list each time, so no caller can mutate another's view.
     """
     import sys
 
     path = Path(root if root is not None else DEFAULT_ROOT) / LOG_NAME
     if not path.exists():
         return []
+
+    stat = path.stat()
+    fingerprint = (stat.st_mtime_ns, stat.st_size)
+    with _PARSE_LOCK:
+        cached = _PARSE_CACHE.get(path)
+        if cached is not None and cached[0] == fingerprint:
+            return list(cached[1])
+
     records: list[SignalRecord] = []
     skipped = 0
     with path.open(encoding="utf-8") as f:
@@ -104,4 +134,11 @@ def read_records(root: str | Path | None = None) -> list[SignalRecord]:
             f"[recorder] {skipped} corrupt line(s) skipped; {len(records)} records loaded",
             file=sys.stderr,
         )
+
+    # Re-stat rather than reusing the fingerprint taken before the read: if the
+    # file was appended to *while* we were reading it, the pre-read fingerprint
+    # would key a partial parse and serve it until the next write.
+    after = path.stat()
+    with _PARSE_LOCK:
+        _PARSE_CACHE[path] = ((after.st_mtime_ns, after.st_size), list(records))
     return records

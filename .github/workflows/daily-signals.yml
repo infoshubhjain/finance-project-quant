@@ -20,9 +20,11 @@ on:
     - cron: "0 22 * * *"
   workflow_dispatch: {} # also lets you run it by hand from the Actions tab
 
-# The job commits back to the repo, so it needs write access to contents.
+# The job commits back to the repo (contents) and opens an issue when a data
+# source dies (issues). Both are the minimum for what it actually does.
 permissions:
   contents: write
+  issues: write
 
 # Never let two daily runs overlap and race on the same signal log.
 concurrency:
@@ -94,6 +96,12 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # INTEGRITY GATE — refuses to commit a shrunken or corrupted signal
+          # log. This step is both the log's backup and the thing most able to
+          # destroy it, so the check runs before anything is staged. See
+          # scripts/verify_signal_log.py for what it checks and why.
+          python scripts/verify_signal_log.py data/signals/signals.jsonl
+
           # Stage whichever artefacts exist. `if: always()` means this step also
           # runs when the batch scan crashed before writing its report, and a
           # bare `git add` on a missing path aborts the whole step.
@@ -119,6 +127,44 @@ jobs:
             done
             echo "::error::could not push the day's signals after 3 attempts"
             exit 1
+          fi
+
+      - name: Open an issue when the scrape degrades
+        # A red build is only an alarm if somebody sees it. GitHub emails the
+        # actor on a failed *scheduled* run, but that mail is easy to filter and
+        # says nothing about which source died — and this whole class of bug is
+        # one that goes unnoticed for a month at a time.
+        #
+        # An issue is the right channel: it notifies, it persists, it holds the
+        # diagnosis, and re-running the same failure updates the existing issue
+        # rather than opening a new one every day.
+        if: steps.ingest.outcome == 'failure'
+        continue-on-error: true # never let the alarm's failure mask the alarm
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          TITLE="Daily scan: a data source returned nothing"
+          EXISTING=$(gh issue list --state open --search "$TITLE in:title" --json number -q '.[0].number')
+          BODY=$(printf '%s\n' \
+            "The scheduled scan on $(date -u +%Y-%m-%d) reported a data kind with **zero items**." \
+            "" \
+            "Today's signals were still committed — partial data is still the day's record —" \
+            "but at least one source produced nothing, so those signals are weaker than they look." \
+            "" \
+            "**Run:** $RUN_URL" \
+            "" \
+            "Look in the *Refresh context caches* step for lines starting with \`EMPTY\` or \`WARNING\`." \
+            "" \
+            "Common cause: a public API began geo-blocking this runner. Reachability is a property" \
+            "of the network and changes without notice — run \`gh workflow run probe-exchanges.yml\`" \
+            "to see what this runner can still reach, then reorder \`FUTURES_CHAIN\`.")
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" --body "$BODY"
+            echo "commented on existing issue #$EXISTING"
+          else
+            gh issue create --title "$TITLE" --body "$BODY" --label "data-outage" 2>/dev/null \
+              || gh issue create --title "$TITLE" --body "$BODY"
           fi
 
       - name: Fail if the scrape degraded

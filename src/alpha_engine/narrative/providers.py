@@ -27,7 +27,8 @@ the point of BYO key is that the operator never holds anyone else's credential.
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import os
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from alpha_engine import net
@@ -80,7 +81,32 @@ PROVIDERS: dict[str, Provider] = {
         default_model="llama-3.3-70b-versatile",
         keys_url="https://console.groq.com/keys",
     ),
+    # Anything else that speaks the OpenAI chat API, addressed by env var.
+    #
+    # This is what makes a *local* model usable — Ollama and LM Studio both
+    # expose an OpenAI-compatible endpoint — and a local model is the only
+    # configuration of this terminal that needs no key and sends no data
+    # anywhere. For a tool whose pitch is "your data stays on your server",
+    # leaving that out was a real hole.
+    #
+    #     LLM_API_BASE=http://localhost:11434/v1 \
+    #     alpha-engine terminal --provider local --model llama3.1 --api-key ollama
+    #
+    # (Ollama ignores the key but the API shape requires one, so pass anything.)
+    "local": Provider(
+        key="local",
+        label="Local / custom (set LLM_API_BASE)",
+        base_url="",  # resolved from the environment; see resolve()
+        style="openai",
+        default_model="llama3.1",
+        keys_url="https://ollama.com/download",
+    ),
 }
+
+#: Where the `local` provider points. Also overrides any provider's base URL,
+#: which is what lets a corporate gateway or a test double stand in for a vendor.
+API_BASE_ENV = "LLM_API_BASE"
+DEFAULT_LOCAL_BASE = "http://localhost:11434/v1"
 
 ANTHROPIC_VERSION = "2023-06-01"
 
@@ -126,11 +152,24 @@ def redact(text: str) -> str:
 
 
 def resolve(provider_key: str) -> Provider:
+    """Look up a provider, applying the `LLM_API_BASE` override if one is set.
+
+    The override exists for three real cases: a local model (Ollama, LM Studio),
+    a corporate gateway that proxies a vendor, and a test double. Without it the
+    base URLs are compile-time constants and none of those are reachable.
+    """
     provider = PROVIDERS.get((provider_key or "").lower())
     if provider is None:
         raise ProviderError(
             f"unknown provider '{provider_key}'. Available: {', '.join(sorted(PROVIDERS))}"
         )
+
+    override = os.environ.get(API_BASE_ENV, "").strip()
+    if provider.key == "local":
+        # `local` has no meaningful default host, so the env var is its address.
+        return replace(provider, base_url=override or DEFAULT_LOCAL_BASE)
+    if override:
+        return replace(provider, base_url=override)
     return provider
 
 
