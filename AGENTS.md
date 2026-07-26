@@ -281,3 +281,42 @@ code and pinned by `tests/test_api.py`:
   Both are correct for their callers. Strategy code wants `fast[i]` to mean bar `i`, so it
   uses the aligned wrappers — mixing them up is an off-by-warmup lookahead bug that looks
   like alpha.
+- **No single futures exchange is reachable from everywhere, and the blocks point in
+  opposite directions.** Measured 2026-07-26: Binance answers 451 and Bybit 403 from a
+  GitHub runner but 200 from a home connection; OKX and Kraken answer 200 from the runner
+  and time out from a US residential IP. `orchestrator/engine.py::FUTURES_CHAIN` therefore
+  walks adapters until one answers and latches the winner. Re-run
+  `.github/workflows/probe-exchanges.yml` before reordering it — reachability is a property
+  of the network, not of the code, and it changes without announcement.
+- **Record health per FEED, never per kind.** This is restated because it already cost a
+  month: `onchain` recorded one aggregate, so when Binance began refusing every request
+  CoinGecko's single dominance reading kept it at "1 item, ok" and six dead fetches were
+  invisible across a month of green builds. `run()` in the orchestrator takes a
+  `{feed: count}` map for exactly this reason, and only records feeds that were *attempted*
+  (an untried fallback would age into a false alarm).
+- **Cache freshness must come from the FETCH time, not from the data's own dates.**
+  `get_macro` compared the newest observation's date against a 1-day TTL. FRED's monthly
+  series are always weeks old by construction, so every series was permanently stale and a
+  four-equity batch made twelve FRED calls instead of three — forever, silently.
+  `LocalStore.macro_fetched_at` reads the file mtime instead.
+- **Two adapters for one metric will not share a unit.** Binance reports open interest in
+  base coin, Gate in contracts (1 contract = 0.0001 BTC), and OKX in USD. The analyzer
+  reads OI as `last / first`, so a series holding two units has a ~100,000x step that
+  scores as a colossal build-up. `crypto_onchain._by_metric` reads only the freshest
+  source per metric; that guard holds for adapters nobody has written yet, whereas a
+  cross-adapter unit convention does not survive the third venue.
+- **Validate numeric tool arguments at `toolkit.call_tool`, not per handler.** `step=-5`
+  used to return HTTP 200 with a backtest reporting zero signals, because
+  `range(warmup, n, -5)` is empty rather than an error — a confidently wrong number, which
+  is worse here than a failure. `_BOUNDS` is checked once so all three transports inherit
+  it.
+- **The daily data commit carries `[skip ci]`, which suppresses every workflow on that
+  commit.** That is intended on `main` (a data commit should not re-run the suite), but it
+  means a branch whose HEAD is a data commit shows *no* CI checks at all — including on a
+  pull request. Push a real commit to get a run.
+- **`web/` is not installed by `pip install alpha-engine`.** It ships with the repository,
+  so the dashboard, terminal and HTTP API are reachable from a clone (`./start.sh`) but not
+  from an installed wheel. `cmd_dashboard` says so explicitly. If the web app should ever
+  be installable, that is a deliberate packaging decision — either move it under
+  `src/alpha_engine/web/` or declare it as a second top-level package, and the second
+  option claims the very generic name `web` in site-packages.
