@@ -62,6 +62,8 @@ function wireTips(root, sel, htmlFn) {
 function renderKpis(p) {
   const o = p.outcomes || {};
   $("k-total").textContent = p.total_records ?? 0;
+  // Served, not hardcoded — the footer used to claim v0.1.0 on 0.5.0 code.
+  if (p.version) $("version").textContent = "v" + p.version;
   $("k-assets").textContent = p.latest_count ?? 0;
 
   const hit = $("k-hit");

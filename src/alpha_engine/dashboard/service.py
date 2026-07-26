@@ -20,6 +20,7 @@ from alpha_engine.analyzers.portfolio_signal import build_portfolio_view
 from alpha_engine.cache.interface import Cache
 from alpha_engine.cache.models import PriceSeries
 from alpha_engine.validation.outcomes import score_record, summarize_outcomes
+from alpha_engine import __version__
 from alpha_engine.validation.recorder import SignalRecord, read_records
 
 # Serialize dashboard builds so concurrent HTTP requests see a consistent snapshot.
@@ -100,6 +101,11 @@ def build_dashboard_payload(
         risk = build_risk_report(risk_signals, series_by_asset, hmm=hmm)
 
         return {
+            # Served rather than hardcoded in the page. The footer claimed
+            # v0.1.0 while running 0.5.0 code, and a version number nobody can
+            # trust is worse than none — it is the first thing quoted in a bug
+            # report.
+            "version": __version__,
             "total_records": len(records),
             "latest_count": len(latest),
             "assets_by_market": dict(sorted(by_market.items())),
