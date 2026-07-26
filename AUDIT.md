@@ -315,9 +315,11 @@ does not exist.
 
 | Item | Why it matters | Status |
 |---|---|---|
-| No browser ever rendered these pages | Structure, wiring and safety are tested; **visual layout is not**. A CSS mistake would pass every test here. | Open — needs a human to look, or Playwright |
-| No structured request logging | Nothing to debug a production incident with | Open, deliberate trade against key privacy |
-| `toolkit.py` at 60% coverage | The gaps are error branches | Open |
-| Equity prices have no second source | Every keyless alternative is behind a bot challenge | Mitigated (retry + health), not solved |
+| No browser ever rendered these pages | A CSS mistake passed every test | **Closed.** `tests/test_browser.py` renders all three pages at three widths in both themes. It found the dashboard laying out at **13,171px** with 1,571px rows — an unclamped `<pre>` of thesis prose — and a composer placeholder clipped mid-word on mobile. |
+| No structured request logging | Nothing to debug an incident with | **Closed.** `RequestLog` emits one JSON line per request, collapsed to a route template, with no code path to a body, header or query value. Off by default. |
+| `toolkit.py` at 60% coverage | The gaps are the error branches — what every new user hits first | **Closed, 96%.** Writing them found the cache-first bug below. |
+| Equity prices have no second source | Yahoo throttles by IP | **Closed (key-gated).** `fmp_prices.py` is tier two; the keyless default is unchanged. Carries an honesty boundary: unverified against a live key. |
+| `no_refresh=True` did not prevent network access | The guarantee that makes the API safe to expose | **Closed.** A cache miss fetched regardless of the flag. Found because the new tests hit the real CoinGecko and came back 429. |
 | No staging environment | Changes go from laptop to main | Open |
+| Visual *taste* is still unjudged | The browser tests assert nothing is broken, not that anything looks good | Open — needs your eye |
 | The engine has no measured edge | The reason the whole backtesting apparatus exists | Open by nature, honestly documented |
