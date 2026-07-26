@@ -369,3 +369,31 @@ def test_clock_skew_does_not_report_a_source_as_degraded():
         total_attempts=5,
     )
     assert future.status(NOW) == "ok"
+
+
+def test_never_run_is_distinguished_from_ran_and_got_nothing():
+    """Both are `unknown`, and both used to print "never run".
+
+    The difference is the whole point of this module: a source nobody asked for
+    is fine, while a source that answered with nothing is a silent outage
+    starting. It reads as `unknown` for its first two attempts, which is exactly
+    when catching it is cheapest.
+    """
+    untouched = SourceHealth(source="onchain.gate_futures")
+    assert untouched.status() == "unknown"
+    assert untouched.explain() == "never run"
+
+    attempted = SourceHealth(
+        source="onchain.binance_futures",
+        last_attempt=datetime.now(timezone.utc).isoformat(),
+        total_attempts=1,
+        consecutive_empty=1,
+    )
+    assert attempted.status() == "unknown"
+    assert "never run" not in attempted.explain()
+    assert "1 attempt," in attempted.explain()
+
+
+def test_repeated_empty_attempts_pluralise_correctly():
+    two = SourceHealth(source="x", last_attempt="t", total_attempts=2, consecutive_empty=2)
+    assert "2 attempts," in two.explain()
