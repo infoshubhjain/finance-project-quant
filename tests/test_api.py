@@ -16,8 +16,10 @@ than a feature:
 
 from __future__ import annotations
 
+import io
 import json
 import threading
+import time
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -30,6 +32,7 @@ from alpha_engine.web.api import (
     ApiConfig,
     ApiState,
     RateLimiter,
+    RequestLog,
     authorize,
     catalogue,
     coerce_query_args,
@@ -447,3 +450,80 @@ def test_bounds_apply_on_every_transport():
 def test_unbounded_arguments_are_left_alone():
     """`asset` and `strategy` are strings; the bounds table must not touch them."""
     assert toolkit.validate_args("scan", {"asset": "BTC", "market": "crypto"}) is None
+
+
+# --------------------------------------------------------------------------
+# Request logging
+#
+# The access log was silenced entirely because POST /api/v1/agent carries the
+# caller's LLM key in its body. That was right about the risk and wrong as a
+# permanent answer: no logging means a production incident leaves no trace. The
+# design constraint is that the logger has no code path that can reach a body, a
+# header or a query value.
+# --------------------------------------------------------------------------
+
+
+def test_logging_is_off_by_default():
+    """The honest default for a tool that handles other people's credentials."""
+    assert ApiState().log.enabled is False
+
+
+def test_nothing_is_written_when_disabled():
+    stream = io.StringIO()
+    RequestLog(enabled=False, stream=stream).write("GET", "/x", 200, time.time(), "1.2.3.4", 10)
+    assert stream.getvalue() == ""
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/api/v1/tools/scan?asset=BTC", "/api/v1/tools/<tool>"),
+        ("/api/v1/tools/strategy_backtest", "/api/v1/tools/<tool>"),
+        ("/api/asset/RELIANCE.NS", "/api/asset/<symbol>"),
+        ("/static/app.js", "/static/<file>"),
+        ("/dashboard", "/dashboard"),
+        ("/api/v1/agent", "/api/v1/agent"),
+    ],
+)
+def test_paths_collapse_to_a_route_template(path, expected):
+    """Values must not survive templating: a log line should not be able to
+    reconstruct which asset anyone looked up."""
+    assert RequestLog().template(path) == expected
+
+
+def test_an_unknown_path_is_never_echoed():
+    """A 404 for `/../../etc/passwd?token=sk-...` must not put that string in a
+    log file — which is exactly where an attacker would like it."""
+    hostile = "/../../etc/passwd?token=sk-super-secret"
+    assert RequestLog().template(hostile) == "<other>"
+
+
+def test_a_logged_line_contains_only_the_permitted_fields():
+    stream = io.StringIO()
+    RequestLog(enabled=True, stream=stream).write(
+        "POST", "/api/v1/tools/scan?asset=BTC&key=sk-secret", 200, time.time(), "10.0.0.1", 42
+    )
+    line = json.loads(stream.getvalue())
+    assert set(line) == {"ts", "method", "route", "status", "ms", "client", "bytes"}
+    assert line["route"] == "/api/v1/tools/<tool>"
+    assert "sk-secret" not in stream.getvalue()
+    assert "BTC" not in stream.getvalue()
+
+
+def test_the_agent_route_logs_without_its_body():
+    """The whole reason the log was silenced in the first place."""
+    stream = io.StringIO()
+    RequestLog(enabled=True, stream=stream).write(
+        "POST", "/api/v1/agent", 200, time.time(), "10.0.0.1", 900
+    )
+    written = stream.getvalue()
+    assert '"route": "/api/v1/agent"' in written
+    assert "api_key" not in written and "question" not in written
+
+
+def test_duration_is_recorded():
+    stream = io.StringIO()
+    RequestLog(enabled=True, stream=stream).write(
+        "GET", "/dashboard", 200, time.time() - 0.05, "1.1.1.1", 10
+    )
+    assert json.loads(stream.getvalue())["ms"] >= 45

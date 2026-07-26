@@ -30,11 +30,14 @@ model, where the operator runs their own instance and their data stays on it.
 from __future__ import annotations
 
 import hmac
+import json
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, ClassVar
 
 from alpha_engine.toolkit import DISCLAIMER, TOOLS, WRITE_CAPABLE, call_tool, tool_names
 
@@ -107,6 +110,7 @@ class ApiState:
 
     config: ApiConfig = field(default_factory=ApiConfig)
     limiter: RateLimiter = field(default_factory=RateLimiter)
+    log: "RequestLog" = field(default_factory=lambda: RequestLog())
 
     def __post_init__(self) -> None:
         if self.limiter.per_minute != self.config.rate_limit_per_min:
@@ -224,3 +228,94 @@ def dispatch_mcp(state: ApiState, msg: dict[str, Any]) -> dict[str, Any] | None:
         }
 
     return mcp_server.handle_request(msg)
+
+
+# ---------------------------------------------------------------------------
+# Request logging
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class RequestLog:
+    """One line per request: enough to debug an incident, never enough to leak.
+
+    The access log was silenced entirely, and for a real reason — `POST
+    /api/v1/agent` carries the caller's LLM API key in its body, and the default
+    `BaseHTTPRequestHandler` logger is one careless change away from printing
+    bodies. But "no logging at all" means a production incident leaves no trace,
+    and that is its own failure.
+
+    So this logs a fixed set of fields and has no code path that can reach a
+    body, a header or a query value:
+
+        method, path, status, duration, client, bytes
+
+    **The path is a route template, not the URL.** `/api/v1/tools/scan` logs as
+    `/api/v1/tools/<tool>` — asset symbols and every other query value are
+    dropped, so a log line cannot reconstruct what anyone looked up. That also
+    makes the lines aggregatable, which is what you actually want when asking
+    "what got slow".
+
+    Off by default (`--log-requests`), because the honest default for a
+    single-operator tool that handles other people's credentials is to record
+    nothing.
+    """
+
+    enabled: bool = False
+    stream: Any = None  # defaults to stderr; injectable for tests
+
+    #: URL shapes collapsed to a template. Ordered: first match wins.
+    _ROUTES: ClassVar[tuple[tuple[str, str], ...]] = (
+        ("/api/v1/tools/", "/api/v1/tools/<tool>"),
+        ("/api/asset/", "/api/asset/<symbol>"),
+        ("/static/", "/static/<file>"),
+    )
+
+    def template(self, path: str) -> str:
+        """Collapse a path to its route. Values never survive this."""
+        path = path.split("?", 1)[0]
+        for prefix, shape in self._ROUTES:
+            if path.startswith(prefix):
+                return shape
+        return path if path in _KNOWN_PATHS else "<other>"
+
+    def write(
+        self, method: str, path: str, status: int, started: float, client: str, size: int
+    ) -> None:
+        if not self.enabled:
+            return
+        stream = self.stream if self.stream is not None else sys.stderr
+        duration_ms = (time.time() - started) * 1000.0
+        print(
+            json.dumps(
+                {
+                    "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "method": method,
+                    "route": self.template(path),
+                    "status": status,
+                    "ms": round(duration_ms, 1),
+                    "client": client,
+                    "bytes": size,
+                }
+            ),
+            file=stream,
+            flush=True,
+        )
+
+
+#: Paths logged verbatim because they carry no user input. Anything not here
+#: becomes `<other>` rather than being echoed — a 404 for
+#: `/../../etc/passwd?key=sk-...` must not put that string in a log file.
+_KNOWN_PATHS = frozenset(
+    {
+        "/",
+        "/index.html",
+        "/dashboard",
+        "/terminal",
+        "/api/dashboard",
+        "/api/v1/tools",
+        "/api/v1/mcp",
+        "/api/v1/agent",
+        "/api/v1/providers",
+    }
+)

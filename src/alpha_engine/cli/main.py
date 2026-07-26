@@ -42,8 +42,21 @@ from alpha_engine.analyzers.volatility import analyze_volatility, volatility_sca
 from alpha_engine.analyzers.volume import analyze_volume
 from alpha_engine.analyzers.vwap import analyze_vwap
 from alpha_engine.cache.interface import Cache
-from alpha_engine.cache.models import MacroObservation, OptionsChain, PriceSeries
-from alpha_engine.ingestion import binance, coingecko, coingecko_pro, fred, oanda, yahoo
+from alpha_engine.cache.models import (
+    Interval,
+    MacroObservation,
+    OptionsChain,
+    PriceSeries,
+)
+from alpha_engine.ingestion import (
+    binance,
+    coingecko,
+    coingecko_pro,
+    fmp_prices,
+    fred,
+    oanda,
+    yahoo,
+)
 from alpha_engine.ingestion.breeze import BreezeLiveClient
 from alpha_engine.ingestion.indian_broker import BrokerNotConfiguredError
 from alpha_engine.ingestion.indian_fno import load_indian_chain
@@ -87,8 +100,21 @@ def _load_series(
     """Shared cache-or-fetch path for commands that need a daily series. A fresh
     cache still gets refetched if it clearly covers less history than requested
     (e.g. `backtest --days 365` right after a 90-day scan) — silently backtesting
-    a quarter when the user asked for a year would be quietly dishonest."""
+    a quarter when the user asked for a year would be quietly dishonest.
+
+    `no_refresh=True` means NO NETWORK, including when nothing is cached at all.
+    That used to be false: the miss branch read `series is None or (... and not
+    no_refresh)`, so an empty cache fetched regardless of the flag. It is the
+    guarantee `toolkit.py` calls non-negotiable — every tool passes
+    `no_refresh=True` precisely so a public API cannot turn one request per
+    ticker into one upstream fetch per ticker and get the host banned. An empty
+    series is returned instead, and every caller already renders that as
+    "no cached data for X; run `scan X` first".
+    """
     series, stale = cache.get_price(asset, "1d")
+    if series is None and no_refresh:
+        return PriceSeries(asset=asset, interval=Interval.DAY, candles=[])
+
     too_short = series is not None and len(series.candles) < (days * 3) // 5
     if series is None or ((stale or too_short) and not no_refresh):
         if market is Market.CRYPTO:
@@ -97,8 +123,7 @@ def _load_series(
             print(f"[ingest] fetching {asset} daily from OANDA...", file=sys.stderr)
             series = oanda.fetch_daily(asset, days=days, cache=cache)
         else:
-            print(f"[ingest] fetching {asset} daily from Yahoo Finance...", file=sys.stderr)
-            series = yahoo.fetch_daily(asset, days=days, cache=cache)
+            series = _fetch_equity_daily(asset, days, cache)
     else:
         print(f"[cache] using cached {asset} ({len(series.candles)} bars)", file=sys.stderr)
     return series
@@ -123,6 +148,33 @@ def _fetch_crypto_daily(asset: str, days: int, cache: Cache) -> PriceSeries:
     except Exception as e:  # noqa: BLE001 - fall back to Binance
         print(f"[ingest] CoinGecko failed ({e}); falling back to Binance", file=sys.stderr)
     return binance.fetch_daily(asset, days=days, cache=cache)
+
+
+def _fetch_equity_daily(asset: str, days: int, cache: Cache) -> PriceSeries:
+    """Equity fetch chain: keyless Yahoo first, then FMP when a key exists.
+
+    Mirrors `_fetch_crypto_daily`. Yahoo stays the primary because it needs no
+    key and the default path must stay keyless; FMP is a second tier for
+    operators who have already set `FMP_API_KEY` for fundamentals.
+
+    Yahoo throttles by IP with HTTP 429 and there is no keyless alternative left
+    to fall back to — every candidate now sits behind a bot challenge — so this
+    tier is the difference between "the scan degrades today" and "the scan
+    degrades today and every retry until the throttle lifts".
+    """
+    try:
+        print(f"[ingest] fetching {asset} daily from Yahoo Finance...", file=sys.stderr)
+        return yahoo.fetch_daily(asset, days=days, cache=cache)
+    except Exception as e:  # noqa: BLE001 - fall through to the keyed tier
+        if not fmp_prices.has_key():
+            # Nothing to fall back to; the caller sees the real Yahoo error
+            # rather than a misleading one about a key it never configured.
+            raise
+        print(
+            f"[ingest] Yahoo failed for {asset} ({e}); trying FMP",
+            file=sys.stderr,
+        )
+    return fmp_prices.fetch_daily(asset, days=days, cache=cache)
 
 
 def _load_macro(cache: Cache, no_refresh: bool) -> dict[str, list[MacroObservation]]:
@@ -1017,6 +1069,8 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         forwarded.append(f"--cors={args.cors}")
     if getattr(args, "allow_public", False):
         forwarded.append("--allow-public")
+    if getattr(args, "log_requests", False):
+        forwarded.append("--log-requests")
 
     try:
         from alpha_engine.web.server import main as web_main
@@ -1758,6 +1812,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-public",
         action="store_true",
         help="bind a non-loopback address without an API key (containers)",
+    )
+    dashboard.add_argument(
+        "--log-requests",
+        action="store_true",
+        help="one JSON line per request; never bodies, query values or keys",
     )
     dashboard.set_defaults(func=cmd_dashboard)
 

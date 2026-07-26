@@ -37,6 +37,7 @@ import json
 import os
 import re
 import sys
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -48,6 +49,7 @@ from alpha_engine.web.api import (
     MAX_BODY_BYTES,
     ApiConfig,
     ApiState,
+    RequestLog,
     authorize,
     catalogue,
     coerce_query_args,
@@ -118,14 +120,30 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "Authorization, Content-Type")
             self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 
-    def log_message(self, format: str, *args) -> None:
-        """Silence the access log.
+    def handle_one_request(self) -> None:
+        """Stamp a start time so the response can report its own duration."""
+        self._started = time.time()
+        super().handle_one_request()
 
-        Not just noise reduction: `POST /api/v1/agent` carries the caller's API
-        key in its body, and any logging added here must never grow to include
-        bodies. Keep it silent.
+    def log_message(self, format: str, *args) -> None:
+        """Silence stdlib's access log.
+
+        Not noise reduction: stdlib's logger is one careless change away from
+        printing a body, and `POST /api/v1/agent` carries the caller's API key in
+        its. Structured logging goes through `ApiState.log`, which can only see a
+        route template and a status — see `web/api.py::RequestLog`.
         """
         return
+
+    def _log(self, status: int, size: int) -> None:
+        self.state.log.write(
+            self.command or "?",
+            self.path,
+            status,
+            getattr(self, "_started", time.time()),
+            self._client(),
+            size,
+        )
 
     # -- request plumbing ---------------------------------------------------
 
@@ -320,6 +338,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self._send_security_headers()
         self.end_headers()
         self.wfile.write(body)
+        self._log(int(HTTPStatus.OK), len(body))
 
     def _send_json(self, payload: dict, status: int = HTTPStatus.OK) -> None:
         body = json.dumps(payload, indent=2, sort_keys=True, default=str).encode("utf-8")
@@ -329,6 +348,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self._send_security_headers(json_response=True)
         self.end_headers()
         self.wfile.write(body)
+        self._log(int(status), len(body))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -356,6 +376,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-public",
         action="store_true",
         help="bind a non-loopback address without an API key (containers; see below)",
+    )
+    parser.add_argument(
+        "--log-requests",
+        action="store_true",
+        help="emit one JSON line per request (route template + status + duration; "
+        "never bodies, headers, query values or keys)",
     )
     return parser
 
@@ -390,7 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 2
 
-    AppHandler.state = ApiState(config=config)
+    AppHandler.state = ApiState(config=config, log=RequestLog(enabled=args.log_requests))
 
     server = ThreadingHTTPServer((args.host, args.port), AppHandler)
     base = f"http://{args.host}:{args.port}"
@@ -402,6 +428,8 @@ def main(argv: list[str] | None = None) -> int:
         print("  auth       required (ALPHA_API_KEY is set)", flush=True)
     if config.allow_writes:
         print("  writes     ENABLED — tools may append to the signal log", flush=True)
+    if args.log_requests:
+        print("  logging    one JSON line per request (no bodies, no keys)", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
