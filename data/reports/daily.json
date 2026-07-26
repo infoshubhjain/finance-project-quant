@@ -1,0 +1,169 @@
+{
+  "started_at": "2026-07-26T02:54:46.562824+00:00",
+  "finished_at": "2026-07-26T02:54:48.846930+00:00",
+  "total": 7,
+  "ok": 7,
+  "errors": 0,
+  "skipped": 0,
+  "results": [
+    {
+      "asset": "BTC",
+      "market": "crypto",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 173.7,
+      "direction": "bullish",
+      "confidence": 0.4095
+    },
+    {
+      "asset": "ETH",
+      "market": "crypto",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 61.9,
+      "direction": "bullish",
+      "confidence": 0.4174
+    },
+    {
+      "asset": "SOL",
+      "market": "crypto",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 92.7,
+      "direction": "bearish",
+      "confidence": 0.4291
+    },
+    {
+      "asset": "AAPL",
+      "market": "us_equity",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 1355.5,
+      "direction": "bullish",
+      "confidence": 0.4332
+    },
+    {
+      "asset": "MSFT",
+      "market": "us_equity",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 198.3,
+      "direction": "bullish",
+      "confidence": 0.3721
+    },
+    {
+      "asset": "GOOGL",
+      "market": "us_equity",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 176.2,
+      "direction": "bearish",
+      "confidence": 0.4609
+    },
+    {
+      "asset": "NVDA",
+      "market": "us_equity",
+      "status": "ok",
+      "error": null,
+      "duration_ms": 224.7,
+      "direction": "bullish",
+      "confidence": 0.4797
+    }
+  ],
+  "portfolio": {
+    "signal_count": 7,
+    "directional_count": 7,
+    "net_bias": 0.407,
+    "direction": "bullish",
+    "conviction_weights": {
+      "BTC": 0.1364,
+      "ETH": 0.139,
+      "SOL": 0.1429,
+      "AAPL": 0.1443,
+      "MSFT": 0.124,
+      "GOOGL": 0.1535,
+      "NVDA": 0.1598
+    },
+    "diversification_score": 0.7492,
+    "concentration_flags": [
+      "BTC and ETH point the same way with +0.89 return correlation \u2014 effectively one position"
+    ],
+    "correlations": {
+      "assets": [
+        "AAPL",
+        "BTC",
+        "ETH",
+        "GOOGL",
+        "MSFT",
+        "NVDA",
+        "SOL"
+      ],
+      "window": 30,
+      "matrix": [
+        [
+          1.0,
+          -0.0017,
+          -0.0032,
+          0.1636,
+          0.5578,
+          0.0412,
+          0.0066
+        ],
+        [
+          -0.0017,
+          1.0,
+          0.8906,
+          -0.2216,
+          -0.1854,
+          0.0846,
+          0.7993
+        ],
+        [
+          -0.0032,
+          0.8906,
+          1.0,
+          -0.141,
+          -0.1222,
+          0.1126,
+          0.8139
+        ],
+        [
+          0.1636,
+          -0.2216,
+          -0.141,
+          1.0,
+          0.2703,
+          0.404,
+          -0.1587
+        ],
+        [
+          0.5578,
+          -0.1854,
+          -0.1222,
+          0.2703,
+          1.0,
+          -0.102,
+          -0.1012
+        ],
+        [
+          0.0412,
+          0.0846,
+          0.1126,
+          0.404,
+          -0.102,
+          1.0,
+          0.0849
+        ],
+        [
+          0.0066,
+          0.7993,
+          0.8139,
+          -0.1587,
+          -0.1012,
+          0.0849,
+          1.0
+        ]
+      ]
+    }
+  }
+}
