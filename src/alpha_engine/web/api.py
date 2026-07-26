@@ -203,7 +203,7 @@ def dispatch_mcp(state: ApiState, msg: dict[str, Any]) -> dict[str, Any] | None:
     """MCP JSON-RPC over HTTP, so a remote MCP client can use the same tools as
     the stdio server. Tool calls route through `dispatch_tool` so the write gate
     and the tool table apply identically on both transports."""
-    import mcp_server
+    from alpha_engine import mcp as mcp_server
 
     if msg.get("method") == "tools/call":
         params = msg.get("params") or {}

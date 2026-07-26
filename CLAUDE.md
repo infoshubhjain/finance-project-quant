@@ -53,8 +53,9 @@ ingestion/ -> cache/ -> analyzers/ -> synthesis/ -> narrative/ -> Signal -> vali
                                                                `-> execution/ (paper-first, gated)
 ```
 
-`schema/signal.py` is the contract everything compiles against. `web/` and
-`mcp_server.py` are read-only and live *outside* the installed package.
+`schema/signal.py` is the contract everything compiles against. `web/` and `mcp.py` are
+read-only transports and live *inside* the package, so a `pip install` ships the
+dashboard, terminal, API and MCP server.
 `.github/workflows/daily-signals.yml` runs the daily scan in the cloud (git scraping).
 
 Three directories sit *beside* the pipeline, not in it: `quant/` (the 504-factor

@@ -523,8 +523,9 @@ src/alpha_engine/
   cli/main.py           every command
   health.py             source health tracking (makes silent decay visible)
 strategies/             drop a BaseStrategy subclass here; it's found automatically
-web/                    dashboard + AI terminal + HTTP API (no build step)
-mcp_server.py           MCP over stdio (stdlib only, transport only)
+  web/                  dashboard + AI terminal + HTTP API (no build step)
+  mcp.py                MCP over stdio (stdlib only, transport only)
+mcp_server.py           3-line shim; MCP client configs point at a file path
 scripts/daily.sh        the scheduled job: lock, timeout, rotation, health check
 scripts/install-cron.sh one-command cron setup
 tests/                  ~2330 tests, all network-free

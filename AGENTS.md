@@ -98,9 +98,12 @@ ingestion/ -> cache/ -> analyzers/ -> synthesis/ -> narrative/ -> Signal -> vali
 - `validation/recorder.py` is append-only (`data/signals/signals.jsonl`) — no code path
   may rewrite old lines. `validation/backtest.py` uses `signal_at` as the sole
   no-lookahead truncation choke point; a test pins byte-identical output.
-- `web/` (server) and `mcp_server.py` are read-only transports and live **outside** the
-  installed package; the CLI reaches `web/` via PYTHONPATH (see `start.sh`). Don't move
-  them into `src/` casually.
+- `web/` (server) and `mcp.py` are read-only transports. They now live **inside** the
+  package at `src/alpha_engine/web/` and `src/alpha_engine/mcp.py`, so `pip install
+  alpha-engine` ships the dashboard, terminal, HTTP API and MCP server. Root
+  `mcp_server.py` is a three-line shim kept only because MCP client configs point at a
+  file path. The frontend is declared as package data in `pyproject.toml`; forget that
+  and the wheel ships a web server with no pages.
 - `portfolio.json` at the repo root configures `scan-all` / `batch` / `orchestrate`.
 
 Two directories sit *beside* the pipeline rather than in it:
@@ -314,9 +317,7 @@ code and pinned by `tests/test_api.py`:
   commit.** That is intended on `main` (a data commit should not re-run the suite), but it
   means a branch whose HEAD is a data commit shows *no* CI checks at all — including on a
   pull request. Push a real commit to get a run.
-- **`web/` is not installed by `pip install alpha-engine`.** It ships with the repository,
-  so the dashboard, terminal and HTTP API are reachable from a clone (`./start.sh`) but not
-  from an installed wheel. `cmd_dashboard` says so explicitly. If the web app should ever
-  be installable, that is a deliberate packaging decision — either move it under
-  `src/alpha_engine/web/` or declare it as a second top-level package, and the second
-  option claims the very generic name `web` in site-packages.
+- **Frontend files are package data, not code.** `src/alpha_engine/web/static/` only ends
+  up in a wheel because `[tool.setuptools.package-data]` names it. A new asset directory
+  needs a new entry there, and the failure mode is a server that starts fine and 404s
+  every page — which no test catches unless it installs the wheel.

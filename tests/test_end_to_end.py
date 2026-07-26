@@ -32,10 +32,10 @@ from pathlib import Path
 
 import pytest
 
-from web.api import ApiConfig, ApiState
-from web.server import AppHandler
+from alpha_engine.web.api import ApiConfig, ApiState
+from alpha_engine.web.server import AppHandler
 
-STATIC = Path(__file__).resolve().parents[1] / "web" / "static"
+STATIC = Path(__file__).resolve().parents[1] / "src" / "alpha_engine" / "web" / "static"
 
 
 # --------------------------------------------------------------------------

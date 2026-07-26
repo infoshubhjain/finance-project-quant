@@ -50,6 +50,14 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# The dashboard/terminal frontend is plain files with no build step, so it has
+# to be declared as package data or the wheel ships a web server with no pages.
+# This is the other half of moving web/ inside the package: before the move,
+# `pip install alpha-engine` gave you the CLI but no dashboard, terminal or
+# HTTP API, and `alpha-engine dashboard` failed with advice that could not work.
+[tool.setuptools.package-data]
+"alpha_engine.web" = ["static/*"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

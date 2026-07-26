@@ -24,9 +24,9 @@ from http.server import ThreadingHTTPServer
 
 import pytest
 
-import mcp_server
+from alpha_engine import mcp as mcp_server
 from alpha_engine import toolkit
-from web.api import (
+from alpha_engine.web.api import (
     ApiConfig,
     ApiState,
     RateLimiter,
@@ -36,7 +36,7 @@ from web.api import (
     dispatch_mcp,
     dispatch_tool,
 )
-from web.server import AppHandler
+from alpha_engine.web.server import AppHandler
 
 
 # --------------------------------------------------------------------------

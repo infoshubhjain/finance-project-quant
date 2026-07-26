@@ -28,7 +28,7 @@ from alpha_engine.cache.models import Candle, Interval, PriceSeries
 from alpha_engine.dashboard.service import build_asset_history
 from alpha_engine.schema.signal import Direction, Market, Signal, SignalSource, Timeframe
 from alpha_engine.validation.recorder import record_signal
-from web.server import AppHandler
+from alpha_engine.web.server import AppHandler
 
 T0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
 

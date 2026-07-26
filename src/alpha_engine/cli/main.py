@@ -1019,28 +1019,16 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         forwarded.append("--allow-public")
 
     try:
-        from web.server import main as web_main
-
-        return web_main(forwarded)
-    except ImportError:
-        # `web/` lives outside the installed package on purpose (see AGENTS.md),
-        # so a `pip install alpha-engine` has the CLI but not the web app. The
-        # old message here said "run python -m web.server instead", which is
-        # advice that cannot work: if the import failed, that module is not on
-        # the path either. Say what is actually wrong and what actually fixes it.
-        print(
-            "[error] the web app is not importable from here.\n"
-            "  `web/` ships with the repository, not with the installed package,\n"
-            "  so `pip install alpha-engine` gives you the CLI but not the\n"
-            "  dashboard, terminal or HTTP API.\n\n"
-            "  Fix, in order of preference:\n"
-            "    git clone https://github.com/infoshubhjain/finance-project-quant\n"
-            f"    cd finance-project-quant && ./start.sh dashboard --port {port}\n"
-            "  or, from an existing clone:\n"
-            f"    PYTHONPATH=. python -m web.server --host {host} --port {port}",
-            file=_sys.stderr,
-        )
+        from alpha_engine.web.server import main as web_main
+    except ImportError as e:  # pragma: no cover - a damaged install, not a flow
+        # The web app now ships inside the package, so this can only mean a
+        # broken installation. It used to mean "you pip-installed and `web/`
+        # was not included", which was a real limitation and the reason for
+        # the move.
+        print(f"[error] could not import the web app: {e}", file=_sys.stderr)
         return 1
+
+    return web_main(forwarded)
 
 
 def cmd_strategies(args: argparse.Namespace) -> int:

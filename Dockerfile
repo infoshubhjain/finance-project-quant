@@ -33,7 +33,6 @@ COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy application code
 COPY src/ src/
-COPY web/ web/
 COPY portfolio.json ./
 COPY .env.example ./
 # Built-in strategies ship inside the package; this is the mount point for the

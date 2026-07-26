@@ -44,7 +44,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from alpha_engine.dashboard.service import build_asset_history, build_dashboard_payload
-from web.api import (
+from alpha_engine.web.api import (
     MAX_BODY_BYTES,
     ApiConfig,
     ApiState,
