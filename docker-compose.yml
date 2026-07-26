@@ -26,14 +26,27 @@ services:
       - ANGEL_ONE_CLIENT_ID=${ANGEL_ONE_CLIENT_ID:-}
       - ANGEL_ONE_ACCESS_TOKEN=${ANGEL_ONE_ACCESS_TOKEN:-}
 
-  # Web dashboard — read-only signal viewer
+  # Web app — dashboard, AI terminal, and the HTTP/MCP API
+  #
+  # `--allow-public` is required because the server refuses to bind a
+  # non-loopback address unauthenticated. Inside a container 0.0.0.0 is the only
+  # reachable bind, and the real boundary is the port mapping below — change
+  # `8000:8000` to `127.0.0.1:8000:8000` to keep it on this machine.
+  #
+  # Exposing it beyond localhost: set ALPHA_API_KEY and drop --allow-public, and
+  # every API call then needs `Authorization: Bearer $ALPHA_API_KEY`.
   dashboard:
     build: .
-    command: ["dashboard", "--host", "0.0.0.0", "--port", "8000"]
+    command: ["dashboard", "--host", "0.0.0.0", "--port", "8000", "--allow-public"]
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
+    environment:
+      # Set this to require auth; the server drops --allow-public's leniency
+      # the moment a key is present.
+      - ALPHA_API_KEY=${ALPHA_API_KEY:-}
     volumes:
       - ./data:/app/data
+      - ./strategies:/app/strategies:ro   # your own strategies, read-only
     profiles:
       - dashboard
 

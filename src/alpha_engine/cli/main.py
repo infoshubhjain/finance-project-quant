@@ -1015,15 +1015,29 @@ def cmd_dashboard(args: argparse.Namespace) -> int:
         forwarded.append(f"--rate-limit={args.rate_limit}")
     if getattr(args, "cors", None):
         forwarded.append(f"--cors={args.cors}")
+    if getattr(args, "allow_public", False):
+        forwarded.append("--allow-public")
 
     try:
         from web.server import main as web_main
 
         return web_main(forwarded)
     except ImportError:
+        # `web/` lives outside the installed package on purpose (see AGENTS.md),
+        # so a `pip install alpha-engine` has the CLI but not the web app. The
+        # old message here said "run python -m web.server instead", which is
+        # advice that cannot work: if the import failed, that module is not on
+        # the path either. Say what is actually wrong and what actually fixes it.
         print(
-            f"[error] web server module not found. Run directly:\n"
-            f"  python -m web.server --host {host} --port {port}",
+            "[error] the web app is not importable from here.\n"
+            "  `web/` ships with the repository, not with the installed package,\n"
+            "  so `pip install alpha-engine` gives you the CLI but not the\n"
+            "  dashboard, terminal or HTTP API.\n\n"
+            "  Fix, in order of preference:\n"
+            "    git clone https://github.com/infoshubhjain/finance-project-quant\n"
+            f"    cd finance-project-quant && ./start.sh dashboard --port {port}\n"
+            "  or, from an existing clone:\n"
+            f"    PYTHONPATH=. python -m web.server --host {host} --port {port}",
             file=_sys.stderr,
         )
         return 1
@@ -1752,6 +1766,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--rate-limit", type=int, default=None, help="API requests per minute per IP (0 disables)"
     )
     dashboard.add_argument("--cors", metavar="ORIGIN", help="send CORS headers for this origin")
+    dashboard.add_argument(
+        "--allow-public",
+        action="store_true",
+        help="bind a non-loopback address without an API key (containers)",
+    )
     dashboard.set_defaults(func=cmd_dashboard)
 
     strategies = sub.add_parser("strategies", help="list strategies available to strategy-backtest")

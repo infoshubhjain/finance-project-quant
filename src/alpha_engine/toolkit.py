@@ -521,6 +521,52 @@ WRITE_ARGS: dict[str, set[str]] = {"scan": {"record"}}
 WRITE_CAPABLE = set(WRITE_ARGS)
 
 
+# Numeric bounds for every tool argument that has one, checked before dispatch.
+#
+# This is not defensive padding — it closes a real hole. Without it the API
+# answered `step=-5` with HTTP 200 and a backtest reporting zero signals, and
+# `capital=-1000` with a full metrics block computed off a negative equity
+# curve. Both are *confidently wrong numbers*, which in this project is a worse
+# outcome than an error: the whole premise is that a number you can read is a
+# number you can trust.
+#
+# `range(warmup, n, -5)` is empty rather than an exception, so nothing raised
+# and nothing looked broken. That is exactly the class of failure the engine is
+# built to make loud.
+#
+# Bounds are generous — they reject the meaningless, not the unusual. Upper
+# limits double as the CPU guard on a public surface, since `factors` and
+# `backtest` are seconds of work each.
+_BOUNDS: dict[str, tuple[float, float]] = {
+    "days": (1, 3650),  # ten years; beyond this no free source has history
+    "step": (1, 10_000),  # 0 raises, negatives silently produce nothing
+    "horizon": (1, 500),  # forward-return window, in bars
+    "top": (1, 1000),  # rows returned from the factor ranking
+    "dte_bars": (1, 365),  # days to expiry on the simulated option
+    "capital": (0.01, 1e12),  # a negative account is not a backtest
+    "txn_cost_bps": (0, 10_000),  # 10_000 bps = 100%, already absurd
+    "max_steps": (1, 20),  # agent tool-calling rounds
+}
+
+
+def validate_args(name: str, args: dict[str, Any]) -> str | None:
+    """Return an error message if any argument is out of bounds, else None.
+
+    Runs in `call_tool`, so every transport inherits it — the MCP stdio server,
+    the HTTP API and the AI terminal cannot disagree about what is acceptable.
+    """
+    for key, value in args.items():
+        bounds = _BOUNDS.get(key)
+        if bounds is None:
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return f"{name}: '{key}' must be a number, got {type(value).__name__}"
+        low, high = bounds
+        if not (low <= value <= high):
+            return f"{name}: '{key}'={value} is out of range [{low:g}, {high:g}]"
+    return None
+
+
 def tool_names() -> list[str]:
     return [t["name"] for t in TOOLS]
 
@@ -573,6 +619,10 @@ def call_tool(
     if read_only:
         for blocked in WRITE_ARGS.get(name, set()):
             args.pop(blocked, None)
+
+    bounds_error = validate_args(name, args)
+    if bounds_error:
+        return {"error": bounds_error, "disclaimer": DISCLAIMER}
 
     try:
         result = handler(args)

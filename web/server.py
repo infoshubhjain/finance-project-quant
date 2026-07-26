@@ -352,6 +352,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="send CORS headers for this origin (default: none, same-origin only)",
     )
+    parser.add_argument(
+        "--allow-public",
+        action="store_true",
+        help="bind a non-loopback address without an API key (containers; see below)",
+    )
     return parser
 
 
@@ -367,11 +372,20 @@ def main(argv: list[str] | None = None) -> int:
     # Refuse, do not warn. Binding to a network interface without a key exposes
     # a CPU-expensive API to anyone who can reach the host, and a warning
     # printed to a terminal nobody is watching is not a security control.
-    if args.host not in _LOOPBACK and not config.requires_auth():
+    #
+    # `--allow-public` is the container escape hatch, and it is a flag rather
+    # than an exception for containers because auto-detecting one would be
+    # guessing. Inside a container 0.0.0.0 is the ONLY way to be reachable at
+    # all — the isolating boundary there is the port mapping, not the bind
+    # address — so refusing it outright breaks `docker compose up` for a setup
+    # that was never unsafe. Making the operator say so keeps the intent
+    # explicit and the default safe.
+    if args.host not in _LOOPBACK and not config.requires_auth() and not args.allow_public:
         print(
             f"refusing to bind {args.host} without an API key.\n"
-            "  Set ALPHA_API_KEY=<something long and random> to expose this server,\n"
-            "  or bind 127.0.0.1 (the default) to keep it local.",
+            "  Set ALPHA_API_KEY=<something long and random> to require auth, or\n"
+            "  pass --allow-public if this is a container whose port mapping is\n"
+            "  the real boundary, or bind 127.0.0.1 (the default) to stay local.",
             file=sys.stderr,
         )
         return 2

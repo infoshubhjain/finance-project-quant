@@ -375,3 +375,75 @@ def test_auth_is_enforced_when_a_key_is_configured():
         server.shutdown()
         server.server_close()
         AppHandler.state = ApiState()
+
+
+# --------------------------------------------------------------------------
+# Numeric bounds
+#
+# These close a hole the red-team pass found: the API answered `step=-5` with
+# HTTP 200 and a backtest reporting zero signals, because `range(warmup, n, -5)`
+# is empty rather than an error. Nothing raised, nothing looked broken, and the
+# caller got a confidently wrong number — the one outcome this project treats as
+# worse than a failure.
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("arg", "value"),
+    [
+        ("step", -5),
+        ("step", 0),
+        ("days", 0),
+        ("days", 999_999_999),
+        ("horizon", 0),
+        ("top", 0),
+        ("capital", -1000),
+        ("txn_cost_bps", -1),
+        ("dte_bars", 0),
+    ],
+)
+def test_out_of_range_arguments_are_refused(arg, value):
+    payload = toolkit.call_tool("backtest", {"asset": "BTC", arg: value})
+    assert "error" in payload, f"{arg}={value} should have been refused"
+    assert arg in payload["error"]
+
+
+def test_in_range_arguments_are_accepted(monkeypatch):
+    monkeypatch.setitem(toolkit.HANDLERS, "backtest", lambda a: {"ok": a.get("step")})
+    payload = toolkit.call_tool("backtest", {"asset": "BTC", "step": 5, "days": 365})
+    assert payload["ok"] == 5
+
+
+def test_a_non_numeric_value_for_a_numeric_argument_is_refused():
+    payload = toolkit.call_tool("backtest", {"asset": "BTC", "days": "all of them"})
+    assert "must be a number" in payload["error"]
+
+
+def test_booleans_are_not_accepted_as_numbers():
+    """bool is a subclass of int in Python, so `days=True` would sail through a
+    naive isinstance check and become days=1."""
+    payload = toolkit.call_tool("backtest", {"asset": "BTC", "days": True})
+    assert "must be a number" in payload["error"]
+
+
+def test_bounds_apply_on_every_transport():
+    """The validation lives in call_tool precisely so no transport can skip it."""
+    state = ApiState()
+    status, payload = dispatch_tool(state, "backtest", {"asset": "BTC", "step": -5})
+    assert status == 400 and "error" in payload
+
+    response = dispatch_mcp(
+        state,
+        {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": {"name": "backtest", "arguments": {"asset": "BTC", "step": -5}},
+        },
+    )
+    assert response["result"]["isError"] is True
+
+
+def test_unbounded_arguments_are_left_alone():
+    """`asset` and `strategy` are strings; the bounds table must not touch them."""
+    assert toolkit.validate_args("scan", {"asset": "BTC", "market": "crypto"}) is None

@@ -335,3 +335,76 @@ def test_generate_signals_must_return_one_signal_per_bar():
 
     with pytest.raises(ValueError, match="one per bar"):
         run_strategy_backtest(Wrong(), _series([1.0, 2.0, 3.0, 4.0]), check_lookahead=False)
+
+
+# --------------------------------------------------------------------------
+# The built-in option-confirmation override
+#
+# `RSIReversal.verify_on_option` is the worked example of the one idea this
+# layer has that the rest of the engine does not, and an audit found it at 31%
+# coverage — i.e. the example nobody had checked.
+# --------------------------------------------------------------------------
+
+
+def _option_candles(closes: list[float], volumes: list[float]) -> list[Candle]:
+    return [
+        Candle(
+            ts=START + timedelta(days=i),
+            open=c,
+            high=c,
+            low=c,
+            close=c,
+            volume=v,
+        )
+        for i, (c, v) in enumerate(zip(closes, volumes))
+    ]
+
+
+def test_rsi_reversal_rejects_a_move_on_thin_volume():
+    """Premium moving the right way on no volume is usually a stale quote or a
+    single lot, not participation."""
+    strategy = load_strategy("RSIReversal", directory="/nonexistent")
+    rising = [10.0 + i for i in range(12)]
+    thin = [1000.0] * 11 + [1.0]  # last bar far below its 10-bar mean
+    assert strategy.verify_on_option(_option_candles(rising, thin), 11, 1) is False
+
+
+def test_rsi_reversal_confirms_a_move_backed_by_volume():
+    strategy = load_strategy("RSIReversal", directory="/nonexistent")
+    rising = [10.0 + i for i in range(12)]
+    heavy = [1000.0] * 11 + [5000.0]
+    assert strategy.verify_on_option(_option_candles(rising, heavy), 11, 1) is True
+
+
+def test_rsi_reversal_does_not_veto_when_volume_is_unreported():
+    """A source that omits volume must not look like zero volume — missing data
+    and no participation lead to opposite conclusions."""
+    strategy = load_strategy("RSIReversal", directory="/nonexistent")
+    candles = [
+        Candle(ts=START + timedelta(days=i), open=c, high=c, low=c, close=c, volume=None)
+        for i, c in enumerate(10.0 + i for i in range(12))
+    ]
+    assert strategy.verify_on_option(candles, 11, 1) is True
+
+
+def test_rsi_reversal_defers_to_the_base_ema_check_first():
+    """Volume cannot rescue a signal the base rule already rejected."""
+    strategy = load_strategy("RSIReversal", directory="/nonexistent")
+    falling = [30.0 - i for i in range(12)]  # well below its 5-EMA
+    heavy = [1000.0] * 11 + [9999.0]
+    assert strategy.verify_on_option(_option_candles(falling, heavy), 11, 1) is False
+
+
+def test_rsi_reversal_generates_signals_at_the_oversold_exit():
+    strategy = load_strategy("RSIReversal", directory="/nonexistent")
+    # Drive RSI down hard, then reverse up so it crosses back above 30.
+    closes = [100.0 - i * 2 for i in range(25)] + [55.0 + i * 3 for i in range(12)]
+    signals = strategy.generate_signals(_series(closes).candles)
+    assert len(signals) == len(closes)
+    assert 1 in signals, "exiting oversold must produce a long signal"
+
+
+def test_short_option_history_is_not_vetoed():
+    """Fewer than 5 bars means no opinion, not a rejection."""
+    strategy = load_strategy("RSIReversal", directory="/nonexistent")
+    assert strategy.verify_on_option(_option_candles([1.0, 2.0], [1.0, 1.0]), 1, 1) is True
