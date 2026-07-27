@@ -16,11 +16,37 @@ would be wrong.
 > flip, and this project says so rather than hiding it. Anyone acting on this
 > output does so entirely at their own risk.
 
-**New here?** [HOW_IT_WORKS.md](HOW_IT_WORKS.md) explains the whole thing in
-plain English before going technical. Start there.
+> ### The measured result
+>
+> The engine has been scored against **6,788 signals across 7 assets and up to
+> 5 years** of history: **+0.0% directional edge** over the base rate. It does
+> not predict. [FINDINGS.md](FINDINGS.md) has the method, the numbers, and the
+> four plausible-looking results that turned out to be measurement errors.
+>
+> That is the honest state, and finding it out is what this project is for.
 
-**Running it daily?** [RUNNING_IT.md](RUNNING_IT.md) covers the scheduled job,
-source-health monitoring, and what to do when a scraper goes quiet.
+## Where to look
+
+Fourteen documents is a lot. Read down this list only as far as you need.
+
+| If you want to… | Read |
+|---|---|
+| **Understand what this is** | [HOW_IT_WORKS.md](HOW_IT_WORKS.md) — plain English first, then technical |
+| **Install and run it** | [GETTING_STARTED.md](GETTING_STARTED.md) |
+| **Know whether it works** | **[FINDINGS.md](FINDINGS.md)** — measured results, including the null ones |
+| **Run it on a schedule** | [RUNNING_IT.md](RUNNING_IT.md) — the daily job and source health |
+| **Change the code** | [AGENTS.md](AGENTS.md) — architecture, extension points, and the gotchas that cost someone a day |
+| **Know why it is built this way** | [context.md](context.md) — the non-negotiable design rules |
+| **See what is planned** | [FUTURE_WORK.md](FUTURE_WORK.md) — the roadmap, rewritten around the measurement |
+| **Judge it for production** | [AUDIT.md](AUDIT.md) — a full security/reliability/performance review |
+| **Write an analyzer** | [docs/analyzer-guide.md](docs/analyzer-guide.md) |
+| **Write a strategy** | [strategies/README.md](strategies/README.md) |
+| **Deploy it** | [docs/deployment.md](docs/deployment.md) |
+| **See what changed** | [CHANGELOG.md](CHANGELOG.md) |
+
+`CLAUDE.md` and `AGENTS.md` are instructions for AI coding assistants working in
+this repo. They are accurate and worth reading as a human too — `AGENTS.md` in
+particular records every trap this codebase has actually sprung.
 
 ---
 

@@ -62,3 +62,23 @@ data/health.json
 
 # Lock directory held by scripts/daily.sh while a run is in flight
 data/.daily.lock/
+
+# --- AI tooling, not project code -------------------------------------------
+#
+# Design/frontend skill packs installed by an assistant, plus generated
+# knowledge-graph output. 215 files and 6.6 MB were tracked here, in FOUR
+# near-identical copies (.agents/ and agent/ are the same skills in different
+# frontmatter formats; data/skills/ was symlinks into .agents/). None of it is
+# part of a market-research engine, and a public repo should not ship a
+# stranger's clone with a `brandkit` skill in it.
+#
+# Untracked, not deleted — they still work locally. Delete the directories
+# yourself if you want the disk space back.
+.agents/
+agent/
+.claude/
+.github/skills/
+data/skills/
+graphify-out/
+skills-lock.json
+opencode.json

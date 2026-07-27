@@ -384,3 +384,62 @@ Check the current answer any time:
 tail -50 data/reports/cron.log     # what the last runs did
 rm -rf data/.daily.lock            # clear a stuck lock (only if no run is active)
 ```
+
+---
+
+## The macro calendar — what is automatic and what is not
+
+The engine lowers confidence ahead of known market-moving events. You do not
+want a confident call the day before a rate decision, and `calendar_scalar()`
+enforces that. It needs a list of dates, and those come from two places:
+
+| Source | Status | Why |
+|---|---|---|
+| **FOMC** (US Fed) | **Automatic** | federalreserve.gov publishes a structured page. `ingest --kind events` scrapes it. |
+| **RBI MPC, CPI, earnings** | **Manual** — `calendar.json` | The RBI publishes MPC dates as an image, not machine-readable HTML. Nothing can scrape it. |
+
+### Do you need calendar.json?
+
+**Only if you scan Indian markets.** If your portfolio is crypto and US equities,
+FOMC already covers you and it is already working — verified 2026-07-27, with a
+decision 2.6 days out the scalar was 0.600 and AAPL's confidence moved
+43.3% → 25.5%.
+
+### If you do want it
+
+```bash
+cp calendar.example.json calendar.json
+# replace the examples with REAL dates, then:
+./start.sh ingest --kind events
+```
+
+```json
+[
+  { "ts": "2026-08-06T05:30:00Z", "name": "RBI MPC decision",
+    "region": "in", "importance": "high" }
+]
+```
+
+`ts` is **UTC** — the RBI announces at 10:00 IST, which is `05:30:00Z`.
+`region` is `us` | `in` | `global`; `importance` is `high` | `medium` | `low`.
+Real dates: [rbi.org.in](https://rbi.org.in) → Press Releases → MPC, and
+[bls.gov/schedule](https://www.bls.gov/schedule/) for CPI.
+
+### Why this repo ships no dates of its own
+
+From `calendar.example.json`, and it is the whole reason the file is empty:
+
+> The engine ships none of its own: a wrong date dampens confidence on the wrong
+> day, which is worse than no calendar at all.
+
+A guessed RBI date silently suppresses a signal on a random Tuesday **and**
+leaves the real decision day un-dampened. Nothing errors, nothing logs, and the
+signals just get quietly worse. An empty calendar is a known gap; a wrong one is
+an invisible defect.
+
+### One thing to decide before you add it
+
+`calendar.json` is **not** gitignored. Committing it makes the dates work in the
+cloud scan too — and publishes them. They are public information (central bank
+schedules), so that is usually fine, but it is your call and worth making
+deliberately rather than by accident.
