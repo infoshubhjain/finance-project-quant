@@ -30,24 +30,49 @@ So the daily job is built around one idea: **make silence loud.**
 
 ---
 
-## Part 1 — Set up the daily job (2 minutes)
+## Part 1 — Set up the daily job
+
+**You probably already have one.** `.github/workflows/daily-signals.yml` runs
+the same job at 22:00 UTC, commits the signals back to the repo, and opens an
+issue when a source dies. It needs no setup, no machine of yours to be awake,
+and it is the path this project actually uses.
+
+Use a **local** cron only if you specifically want the scan running on your own
+machine — for example because a data source your home IP can reach is blocked
+from GitHub's datacenter ranges (Binance is; see
+`.github/workflows/probe-exchanges.yml`).
+
+### If you do want a local job, read this first
+
+Two things kill it, and both are silent:
+
+1. **macOS will not let cron read `~/Desktop`, `~/Documents` or `~/Downloads`.**
+   The entry installs fine and then never runs. It writes no log — the *absence*
+   of `data/reports/cron.log` is the only symptom — and mails the error to
+   `/var/mail/$USER`, which nobody reads. This is not hypothetical: it happened
+   here for five consecutive days in July 2026 before anyone noticed.
+   `install-cron.sh` now warns when it detects a protected path.
+2. **A sleeping laptop at 9am simply skips the run.** cron does not wake the
+   machine and does not catch up. `launchd` with `StartCalendarInterval` does.
+
+And one thing that corrupts data rather than losing it:
+
+3. **Do not run both schedulers.** They append to the same append-only
+   `data/signals/signals.jsonl`, and two writers on one append-only file
+   diverge — you get a git conflict, or worse, two partial histories.
 
 ```bash
-./scripts/install-cron.sh
-```
-
-That is it. It installs a job that runs at 9am every day.
-
-Want a different time?
-
-```bash
+./scripts/install-cron.sh               # 9am local
 ./scripts/install-cron.sh --at 18:30    # 6:30pm, 24-hour clock
 ```
 
-Check it worked:
+Check it worked — and check again after the first scheduled time, because
+installing is not running:
 
 ```bash
 crontab -l
+tail data/reports/cron.log     # MUST exist after the first run
+grep -c "not permitted" /var/mail/$USER   # 0, or cron is being blocked
 ```
 
 You should see a line ending in `scripts/daily.sh`.

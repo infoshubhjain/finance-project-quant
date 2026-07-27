@@ -11,12 +11,56 @@
 # carry an absolute path, and getting that wrong is the single most common
 # reason a cron job silently never runs. This derives it.
 #
-# macOS note: `crontab` is protected by TCC. If this hangs or reports
-# "Operation not permitted", grant Full Disk Access to your terminal in
-#   System Settings -> Privacy & Security -> Full Disk Access
-# and run it again. The same restriction applies to cron itself at runtime.
+# macOS has TWO separate TCC problems here and they need different fixes.
+# Confusing them cost this project five days of a job that never ran once.
+#
+# 1. WRITING the crontab. If this script hangs or says "Operation not
+#    permitted", grant Full Disk Access to your *terminal*.
+#
+# 2. cron READING your script at run time. This is the one that bites, because
+#    step 1 succeeds and everything looks installed. `/usr/sbin/cron` is a
+#    different process from your terminal and has its own TCC grant; if the repo
+#    lives under ~/Desktop, ~/Documents or ~/Downloads it cannot read the script
+#    at all. The job fails before it starts, writes no log, and mails the error
+#    to /var/mail/$USER where nobody looks.
+#
+#    Measured on this machine 2026-07-27: five consecutive days of
+#    "Operation not permitted", zero log lines, and the absence of
+#    data/reports/cron.log was the only visible symptom.
+#
+#    Fix by granting Full Disk Access to /usr/sbin/cron, or by moving the repo
+#    out of a protected folder. Granting it to your terminal does NOT fix this.
+#
+# Before installing anything, consider whether you need this at all: the
+# GitHub Action (.github/workflows/daily-signals.yml) already runs the same job
+# daily and commits the result back. Running both makes two schedulers append to
+# one append-only signal log, which diverges and conflicts.
 
 set -uo pipefail
+
+warn_if_tcc_protected() {
+    # cron cannot read these folders without its own Full Disk Access grant.
+    case "$PROJECT_DIR" in
+        "$HOME"/Desktop/*|"$HOME"/Documents/*|"$HOME"/Downloads/*)
+            echo "" >&2
+            echo "WARNING: this repo lives under a macOS-protected folder:" >&2
+            echo "  $PROJECT_DIR" >&2
+            echo "" >&2
+            echo "The crontab entry will install fine and then NEVER RUN." >&2
+            echo "/usr/sbin/cron cannot read scripts in ~/Desktop, ~/Documents" >&2
+            echo "or ~/Downloads without its own Full Disk Access grant — and it" >&2
+            echo "fails silently, writing no log. Check /var/mail/$USER for" >&2
+            echo "'Operation not permitted' if you install anyway." >&2
+            echo "" >&2
+            echo "Fixes, best first:" >&2
+            echo "  1. Use the GitHub Action instead — it already does this job." >&2
+            echo "  2. Move the repo out of the protected folder." >&2
+            echo "  3. System Settings -> Privacy & Security -> Full Disk Access," >&2
+            echo "     add /usr/sbin/cron (Cmd-Shift-G to type the path)." >&2
+            echo "" >&2
+            ;;
+    esac
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -89,6 +133,8 @@ if [ "$ACTION" = "remove" ]; then
 fi
 
 NEW="$(printf '%s\n%s\n%s\n' "$CLEANED" "$MARKER" "$ENTRY" | sed '/^[[:space:]]*$/d')"
+
+warn_if_tcc_protected
 
 if printf '%s\n' "$NEW" | crontab -; then
     echo "installed:"

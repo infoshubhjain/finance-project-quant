@@ -322,3 +322,14 @@ code and pinned by `tests/test_api.py`:
   up in a wheel because `[tool.setuptools.package-data]` names it. A new asset directory
   needs a new entry there, and the failure mode is a server that starts fine and 404s
   every page — which no test catches unless it installs the wheel.
+- **When a scheduled job "isn't running", read `/var/mail/$USER` first.** cron
+  reports failures by mail and nowhere else. A local 9am entry here failed for five
+  consecutive days with `Operation not permitted` — macOS will not let
+  `/usr/sbin/cron` read `~/Desktop`, and `/usr/sbin/cron` is a different process
+  from your terminal with its own Full Disk Access grant. Granting it to the
+  terminal fixes writing the crontab and does nothing for the job. The tell was
+  that `data/reports/cron.log` did not exist at all: an absent log is a louder
+  signal than a stale one, and the same reasoning as the silent-decay rule above.
+  The local entry is gone; `.github/workflows/daily-signals.yml` owns the daily
+  scan. Do not re-add a second scheduler — two writers on one append-only signal
+  log diverge.
