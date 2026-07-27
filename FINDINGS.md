@@ -66,21 +66,37 @@ subset selected by the outcome.
 harmless. But AAPL rose in 56.1% of 10-bar windows over this period, so 50% is
 *worse than doing nothing*. The base rate is the bar, not a coin.
 
-### The invalidation level is destroying value
+### CORRECTION (same day): the invalidation level is NOT destroying value
 
-Scored with the stop, the blended signal hits 42.2% on BTC against a 53.3% base
-rate. Scored without it, direction is ~50/50. The stop is not protecting the
-strategy, it is converting a coin flip into a loss:
+An earlier revision of this file claimed the stop was "converting a coin flip
+into a loss". That was wrong, and the error is worth keeping on the record
+because it is the third false positive this measurement has produced.
 
-| | BTC | AAPL |
-|---|---:|---:|
-| Stopped out before the horizon | 34.2% | 28.6% |
-| Survived, finished in the right direction | 42.2% | 47.7% |
-| Survived, finished wrong | 23.6% | 23.7% |
+The claim came from comparing a **hit rate** against a base rate. `hit` counts
+any touched stop as a total miss regardless of magnitude, so the metric punishes
+stops by construction — it cannot tell a 1% scratch from a 20% rout.
 
-Roughly a third of all signals are killed by their own invalidation level before
-the thesis has time to play out. That is the most concrete, actionable defect
-this measurement found — and unlike the edge question, it is a *fixable* one.
+Measured properly, in return terms, on the same 5,959 signals:
+
+| Asset | No stop | With stop | Stop cost |
+|---|---:|---:|---:|
+| BTC | +0.290% | +0.216% | −0.073% |
+| ETH | +0.989% | +0.685% | −0.304% |
+| AAPL | −0.059% | +0.063% | **+0.122%** |
+| MSFT | −0.280% | −0.347% | −0.067% |
+| NVDA | +0.599% | +0.618% | **+0.019%** |
+| GOOGL | −0.084% | −0.036% | **+0.048%** |
+| **All** | **+0.215%** | **+0.184%** | **−0.031%** |
+
+It helps on three assets and hurts on three. −0.031% overall is noise. The stop
+is roughly free, and it buys a bounded worst case — which is worth having.
+
+**The lesson, again: pick the metric that answers the question you asked.** Hit
+rate answers "was the call right"; it does not answer "did the rule make money",
+and using it for the second question invents a defect that is not there.
+
+The median stop also sits *wider* than the median 10-bar drawdown (1.6–1.9 ATR),
+so "too tight" was wrong on the mechanics as well as the outcome.
 
 ### Per-analyzer, without the stop (AAPL, base rate 56.1%)
 
@@ -99,6 +115,69 @@ bearish calls on an asset that spent the window rising. The direction-matched
 number in the table above (+0.0%) is the fair one. What survives either reading
 is the ordering — `rsi` and `bollinger` are the weakest inputs by a clear
 margin, and both are worth removing or re-thinking before anything else is added.
+
+### The analyzers systematically contradict each other — and fixing that changes nothing
+
+Two of the eight analyzers are **mean-reverting** (`rsi`: oversold → bullish;
+`bollinger`: below the lower band → bullish). The other six are
+**trend-following**. Measured agreement with the trend anchor on AAPL:
+
+| Analyzer | Shared signals | Agrees with trend |
+|---|---:|---:|
+| multi_timeframe | 370 | 83.5% |
+| vwap | 388 | 74.7% |
+| volume | 388 | 70.4% |
+| macd | 388 | 61.6% |
+| support_resistance | 318 | 45.9% |
+| **bollinger** | 264 | **18.2%** |
+| **rsi** | 49 | **2.0%** |
+
+`rsi` opposes the trend anchor 98% of the time. That is not a bug — it is what a
+contrarian indicator does — but it means the engine averages two opposite
+philosophies into one weighted vote, where they cancel. It looked like the
+explanation for the mediocre blend.
+
+**It is not.** Rebuilding the blend without `rsi` and `bollinger`, scored on the
+same bars:
+
+| Asset | Base rate | All 8 | Without mean-reversion | Change |
+|---|---:|---:|---:|---:|
+| BTC | 53.3% | 47.5% | 48.2% | +0.8% |
+| AAPL | 56.1% | 52.2% | 52.5% | +0.2% |
+| NVDA | 57.1% | 52.6% | 52.7% | +0.1% |
+| MSFT | 52.5% | 49.1% | 48.6% | −0.4% |
+| **All (n=2,063)** | | **50.5%** | **50.7%** | **+0.1%** |
+
++0.1% is noise, and both versions remain below every base rate.
+
+**This is the deepest result in the file.** The problem is not the blend, not the
+stop, and not which analyzers are included. Averaging noise with anti-correlated
+noise gives noise; removing the anti-correlated noise also gives noise. There is
+nothing to blend.
+
+It also retires two recommendations this document previously made — "fix the
+invalidation level" and "drop rsi and bollinger". Both were plausible, both were
+measured, and both were wrong. Recomposing the existing inputs is a dead end;
+the only moves left are to find an input that actually predicts, or to accept
+the engine as a research instrument and stop trying to make it profitable.
+
+---
+
+## Every claim this measurement got wrong before getting it right
+
+Kept deliberately. Four plausible findings died under a second look, and the
+pattern in all four is the same: **the metric answered a different question than
+the one being asked.**
+
+| Claim | Why it was wrong |
+|---|---|
+| "+10% edge among surviving signals" | Survivorship. Losers get stopped out and leave the sample. |
+| "Analyzers are near 50%, so harmless" | AAPL rose 56.1% of the time. 50% is worse than nothing. |
+| "The invalidation level is destroying value" | Measured by hit rate, which counts any stop-out as a total miss. In return terms it costs −0.031% — noise. |
+| "Drop rsi and bollinger to improve the blend" | Measured: +0.1%. Nothing to improve. |
+
+If a fifth reading looks like edge, assume it is one of these until shown
+otherwise.
 
 ---
 

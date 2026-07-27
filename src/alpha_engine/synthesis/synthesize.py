@@ -59,11 +59,30 @@ try:
     _calibrated = load_calibration()
     if _calibrated:
         SOURCE_RELIABILITY.update(_calibrated)
+        import json as _json
         import sys
 
+        # Say where the numbers came from, every time they are applied. A
+        # calibration built by replaying history is IN SAMPLE on the same bars
+        # the analyzers are about to run on again, and a weight derived that way
+        # must not look identical to one earned out of sample. Announcing it only
+        # at `calibrate` time is not enough — the person reading a signal is not
+        # the person who ran the calibration, and may be months later.
+        _source = "unknown"
+        try:
+            from alpha_engine.validation.calibrate import CALIBRATION_PATH
+
+            _source = _json.loads(CALIBRATION_PATH.read_text()).get("source", "unknown")
+        except Exception:  # noqa: BLE001 - provenance is best-effort, never fatal
+            pass
+        _note = (
+            " (IN SAMPLE — replayed from history, an honest prior, not evidence)"
+            if _source == "backtest"
+            else ""
+        )
         print(
             f"[calibrate] loaded reliability for {len(_calibrated)} analyzers "
-            f"from data/calibration.json",
+            f"from data/calibration.json [source={_source}]{_note}",
             file=sys.stderr,
         )
 except Exception:  # noqa: BLE001 — fresh clone or missing data

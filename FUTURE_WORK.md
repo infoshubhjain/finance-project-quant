@@ -211,11 +211,19 @@ base rate. See [FINDINGS.md](FINDINGS.md) for the method, the numbers, and the
 two false-positive readings that were nearly reported as edge instead.
 
 That reframes everything below. The roadmap was written to add capability to an
-engine assumed to work; the measurement says the next work is **subtractive** —
-fix the invalidation level (it kills ~30% of signals before the thesis can play
-out and turns a coin flip into a loss), repair or drop `rsi` and `bollinger`
-(the two weakest inputs by a clear margin), then re-measure. Adding a ninth
-analyzer to eight that carry no signal produces nine that carry no signal.
+engine assumed to work; the measurement says recomposing the
+existing inputs is a **dead end**. Both obvious fixes were tested and both
+changed nothing: the invalidation stop costs −0.031% (noise, and it buys a
+bounded worst case), and dropping the two mean-reverting analyzers moves the
+blend by +0.1%. Adding a ninth analyzer to eight that carry no signal produces
+nine that carry no signal.
+
+Two honest paths remain. **Find an input that actually predicts** — the
+504-factor registry with its noise floor is the tool built for exactly that
+search, and it has never been run systematically. Or **accept the engine as a
+research instrument** and stop trying to make it profitable, which is a
+legitimate outcome for something whose stated purpose is education and honest
+measurement.
 
 Shipped since the last update, and not in the plan below because they were not
 in it: the strategy layer (`strategy/` — user-written rules, trade-level P&L,
