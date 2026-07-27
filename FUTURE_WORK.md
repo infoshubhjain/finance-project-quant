@@ -161,7 +161,7 @@ from the symbol (`BTC` → crypto, `NIFTY` → F&O, `.NS` suffix → Indian equi
 `EURUSD` → forex, else US equity). Commands: `scan`, `scan-all`, `watch`,
 `backtest`, `report`, `record-stats`, `batch`, `scan-chain`, `fetch-chain`,
 `dashboard`. `orchestrator/` runs batches over `portfolio.json`, fault-isolated so
-one asset failing never blocks the rest. `web/server.py` is a read-only local
+one asset failing never blocks the rest. `alpha_engine/web/server.py` is a read-only local
 dashboard on Python's stdlib HTTP server — no auth, no writes, no trading buttons.
 
 **325 tests, all network-free.**
@@ -203,7 +203,33 @@ Order: **measure → wire up what already exists → close the loop → then gro
 
 ---
 
-## Where this stands (updated 2026-07-20, v0.3.0)
+## Where this stands (updated 2026-07-27, v0.5.0)
+
+**The engine has now been measured, and it has no directional edge.** +0.0% over
+6,788 signals across 7 assets and 2.7–5 years, scored against a direction-matched
+base rate. See [FINDINGS.md](FINDINGS.md) for the method, the numbers, and the
+two false-positive readings that were nearly reported as edge instead.
+
+That reframes everything below. The roadmap was written to add capability to an
+engine assumed to work; the measurement says the next work is **subtractive** —
+fix the invalidation level (it kills ~30% of signals before the thesis can play
+out and turns a coin flip into a loss), repair or drop `rsi` and `bollinger`
+(the two weakest inputs by a clear margin), then re-measure. Adding a ninth
+analyzer to eight that carry no signal produces nine that carry no signal.
+
+Shipped since the last update, and not in the plan below because they were not
+in it: the strategy layer (`strategy/` — user-written rules, trade-level P&L,
+option cross-verification, CSV input), one shared tool table (`toolkit.py`)
+behind MCP-over-stdio, MCP-over-HTTP and REST, and the two-section web app
+(`/dashboard` read-only, `/terminal` a BYO-key AI chat that answers only by
+calling engine tools).
+
+Phase 9 is partly shipped: `calibrate --from-backtest` replays cached history to
+produce per-analyzer reliabilities in seconds rather than waiting weeks for live
+signals to resolve. It is tagged `source="backtest"` because it is IN SAMPLE —
+an honest prior, not evidence.
+
+### Previous status (2026-07-20, v0.3.0)
 
 That order was followed, and Part A is now finished except for the one phase that
 is gated on time rather than effort.
@@ -339,7 +365,7 @@ a research tool in this phase. Phase 9 handles feeding it back safely.
 
 ---
 
-## Phase 8 — The Risk Agent: wire up what you already wrote
+## Phase 8 — The Risk Agent: wire up what you already wrote `SHIPPED`
 
 **Goal.** Layer 4 of the original blueprint called for a risk agent alongside
 signal synthesis. Two thirds of it is already sitting in the repo, unimported.
@@ -381,7 +407,7 @@ closer to the regulated line than directional research is.
 
 ---
 
-## Phase 9 — Close the Feedback Loop
+## Phase 9 — Close the Feedback Loop `PARTLY SHIPPED (2026-07-27)`
 
 **Goal.** The original Layer-5 promise: *"the backtest results tell the agents
 what actually worked."* Today they don't.

@@ -444,7 +444,7 @@ weight.
 | Add a factor | One `_add(...)` line in `quant/factors.py` — nothing else |
 | Change confidence maths | `synthesis/synthesize.py` |
 | Add a CLI command | `cli/main.py`: `cmd_*` + a `sub.add_parser` block |
-| Expose a tool to AI assistants | `mcp_server.py`: add to `TOOLS` and `HANDLERS` |
+| Expose a tool to AI assistants | `toolkit.py`: add to `TOOLS` and `HANDLERS`. It appears on MCP-over-stdio, MCP-over-HTTP and REST at once |
 
 Adding a factor really is one line. The moment it lands in `FACTOR_REGISTRY` it
 appears in `factors` output, gets IC-scored, and is covered by the lookahead

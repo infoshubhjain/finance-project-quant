@@ -103,6 +103,10 @@ These fail quietly — no crash, wrong behavior for months. Full list in AGENTS.
   `_load_onchain`, `_load_fundamentals` in `cli/main.py` never fetch; `ingest` and
   `orchestrate` populate them. Making them fetch inline takes `pytest` from ~23s to ~70s.
 
+**Measured, not claimed:** [FINDINGS.md](FINDINGS.md) holds what the engine has
+actually been shown to do — currently +0.0% directional edge over 6,788 signals.
+Read it before trusting anything here.
+
 ## Everything else
 
 Read [AGENTS.md](AGENTS.md) — it holds the full command list, architecture,

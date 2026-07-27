@@ -393,6 +393,10 @@ schema it is given, so it never even sees them.
 
 ---
 
+**Measured, not claimed:** [FINDINGS.md](FINDINGS.md) holds what the engine has
+actually been shown to do — currently +0.0% directional edge over 6,788 signals.
+Read it before trusting anything here.
+
 ## The rule everything is built around
 
 > **Decision-bearing numbers come only from deterministic, tested Python. The

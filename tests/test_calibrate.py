@@ -6,6 +6,7 @@ All tests use crafted inputs — no network, no randomness.
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -297,3 +298,105 @@ class TestCalibrate:
         result = calibrate(records=[record], cache=cache, min_samples=1, shrinkage_k=30.0)
         assert result.window_resolved == 0
         assert len(result.analyzers) == 0
+
+
+# --------------------------------------------------------------------------
+# Calibration from replayed history
+#
+# The live log needs ten trading days before one swing signal resolves, so a
+# fresh install has nothing to learn from for weeks. Replaying cached history
+# gives thousands of scored calls in seconds — measured: 13,401 across seven
+# assets in five seconds.
+# --------------------------------------------------------------------------
+
+
+def _trending_series(asset: str, n: int = 300, up: bool = True):
+    """A series with a clear direction, so a directional call is checkable."""
+    from alpha_engine.cache.models import Candle, Interval, PriceSeries
+
+    t0 = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    candles = []
+    for i in range(n):
+        drift = i * 0.5 if up else -i * 0.5
+        c = 200.0 + drift + math.sin(i / 7) * 3
+        candles.append(
+            Candle(
+                ts=t0 + timedelta(days=i),
+                open=c,
+                high=c * 1.01,
+                low=c * 0.99,
+                close=c,
+                volume=1000.0,
+            )
+        )
+    return PriceSeries(asset=asset, interval=Interval.DAY, candles=candles)
+
+
+def test_backtest_calibration_is_tagged_as_in_sample(tmp_path):
+    """It grades itself on the same bars the analyzers will run on again. If
+    that provenance is ever lost, the engine trusts its own homework."""
+    from alpha_engine.validation.calibrate import calibrate_from_backtest
+
+    store = LocalStore(tmp_path)
+    cache = Cache(store)
+    store.write_price(_trending_series("BTC"))
+
+    result = calibrate_from_backtest({"BTC": Market.CRYPTO}, step=10, cache=cache)
+    assert result.source == "backtest"
+    assert result.assets == ["BTC"]
+
+
+def test_live_calibration_keeps_its_own_provenance():
+    from alpha_engine.validation.calibrate import calibrate
+
+    assert calibrate(records=[]).source == "live_log"
+
+
+def test_it_produces_reliabilities_without_waiting_for_the_log(tmp_path):
+    store = LocalStore(tmp_path)
+    cache = Cache(store)
+    store.write_price(_trending_series("BTC"))
+
+    from alpha_engine.validation.calibrate import calibrate_from_backtest
+
+    result = calibrate_from_backtest({"BTC": Market.CRYPTO}, step=5, cache=cache)
+    assert result.window_records > 0, "replay produced no scored calls"
+    assert result.analyzers, "no analyzers were calibrated"
+    assert all(0.0 <= a.shrunk_reliability <= 1.0 for a in result.analyzers)
+
+
+def test_an_asset_with_too_little_history_is_skipped(tmp_path):
+    """Warmup is 80 bars; a 30-bar series cannot produce a single signal, and
+    silently calibrating on zero samples would be worse than skipping."""
+    from alpha_engine.validation.calibrate import calibrate_from_backtest
+
+    store = LocalStore(tmp_path)
+    cache = Cache(store)
+    store.write_price(_trending_series("TINY", n=30))
+
+    result = calibrate_from_backtest({"TINY": Market.CRYPTO}, cache=cache)
+    assert result.assets == []
+    assert result.window_records == 0
+
+
+def test_a_missing_asset_does_not_raise(tmp_path):
+    from alpha_engine.validation.calibrate import calibrate_from_backtest
+
+    result = calibrate_from_backtest({"NOPE": Market.CRYPTO}, cache=Cache(LocalStore(tmp_path)))
+    assert result.assets == []
+
+
+def test_shrinkage_still_applies_to_replayed_samples(tmp_path):
+    """Thousands of samples must not bypass the shrink toward 0.50 — the
+    sample-floor discipline is what stops one lucky window becoming a weight."""
+    from alpha_engine.validation.calibrate import calibrate_from_backtest
+
+    store = LocalStore(tmp_path)
+    cache = Cache(store)
+    store.write_price(_trending_series("BTC"))
+
+    result = calibrate_from_backtest(
+        {"BTC": Market.CRYPTO}, step=5, min_samples=10_000, cache=cache
+    )
+    assert all(a.used_default for a in result.analyzers)
+    assert all(a.shrunk_reliability == 0.5 for a in result.analyzers)

@@ -1583,13 +1583,40 @@ def cmd_calibrate(args: argparse.Namespace) -> int:
     """
     from alpha_engine.validation.calibrate import (
         calibrate,
+        calibrate_from_backtest,
         write_calibration,
     )
 
-    result = calibrate(
-        min_samples=args.min_samples,
-        shrinkage_k=args.shrinkage_k,
-    )
+    if args.from_backtest:
+        # The live log needs ten trading days before one swing signal resolves,
+        # so a fresh install has nothing to learn from for weeks. Replaying
+        # cached history gives thousands of scored calls in seconds instead.
+        from alpha_engine.orchestrator import _load_targets_from_defaults
+
+        # The same portfolio `scan-all` and `batch` use, so calibration is
+        # measured on exactly the assets the engine actually runs on.
+        assets = {t.asset: t.market for t in _load_targets_from_defaults()}
+        result = calibrate_from_backtest(
+            assets,
+            step=args.step,
+            min_samples=args.min_samples,
+            shrinkage_k=args.shrinkage_k,
+        )
+        print(
+            f"[calibrate] replayed {len(result.assets)} asset(s): {', '.join(result.assets)}",
+            file=sys.stderr,
+        )
+        print(
+            "[calibrate] source=backtest — IN SAMPLE on the same bars the analyzers\n"
+            "            will run on again. An honest prior, not evidence. Re-run\n"
+            "            without --from-backtest once real signals have resolved.",
+            file=sys.stderr,
+        )
+    else:
+        result = calibrate(
+            min_samples=args.min_samples,
+            shrinkage_k=args.shrinkage_k,
+        )
 
     if args.dry_run:
         print(result.model_dump_json(indent=2))
@@ -1978,6 +2005,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=50,
         help="minimum resolved signals per analyzer to override default (default: 50)",
+    )
+    calibrate.add_argument(
+        "--from-backtest",
+        action="store_true",
+        help="replay cached history instead of waiting for live signals to resolve "
+        "(IN SAMPLE — an honest prior, not evidence)",
+    )
+    calibrate.add_argument(
+        "--step",
+        type=int,
+        default=1,
+        help="bars between replayed signals when using --from-backtest (default: 1)",
     )
     calibrate.add_argument(
         "--shrinkage-k",

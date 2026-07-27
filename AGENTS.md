@@ -79,7 +79,8 @@ table — `src/alpha_engine/toolkit.py` — so they cannot drift:
 to `mcp_server.py` is a bug — that file is transport only.
 
 CI (`.github/workflows/ci.yml`) tests on Python 3.11–3.13; coverage reported, not gated.
-45 test files, ~2330 tests, all network-free, ~30s.
+49 test files, ~2540 tests, all network-free, ~40s. `tests/test_browser.py` is
+opt-in (`pip install -e ".[browser]"`) and skipped otherwise, so CI stays fast.
 
 ## Architecture
 
@@ -205,7 +206,7 @@ code and pinned by `tests/test_api.py`:
 - **Writes are off by default** (`--allow-writes` opts in), and the gate applies to
   the MCP-over-HTTP transport too — it must not be bypassable by changing protocol.
 - **BYO keys are never stored.** The terminal's API key arrives in the request body,
-  goes to the provider, and is dropped. There is no key store; `web/server.py`'s
+  goes to the provider, and is dropped. There is no key store; `alpha_engine/web/server.py`'s
   access log is silenced for this reason and must stay that way.
 
 ## Gotchas
@@ -239,7 +240,7 @@ code and pinned by `tests/test_api.py`:
   set from the consuming analyzer's lookback; `tests/test_cache_retention.py` pins the
   pairing. Raising an analyzer's lookback past its window silently starves it.
 - Atomic-write temp names key on PID **and** thread id. PID alone collides between threads
-  and the losing rename raises; `web/server.py` is a ThreadingHTTPServer.
+  and the losing rename raises; `alpha_engine/web/server.py` is a ThreadingHTTPServer.
 - The scheduled job is `scripts/daily.sh` (lock, stale-lock recovery, timeout, rotation,
   health gate). Do not add cron entries that call the CLI directly — an entry without
   `ingest` leaves every context source permanently empty.
