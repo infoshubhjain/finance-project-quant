@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-08-01T07:35:36.609824+00:00",
-  "finished_at": "2026-08-01T07:35:37.955108+00:00",
+  "started_at": "2026-08-02T07:40:11.705943+00:00",
+  "finished_at": "2026-08-02T07:40:12.805811+00:00",
   "total": 7,
   "ok": 7,
   "errors": 0,
@@ -11,34 +11,34 @@
       "market": "crypto",
       "status": "ok",
       "error": null,
-      "duration_ms": 56.2,
+      "duration_ms": 54.2,
       "direction": "bearish",
-      "confidence": 0.2974
+      "confidence": 0.4246
     },
     {
       "asset": "ETH",
       "market": "crypto",
       "status": "ok",
       "error": null,
-      "duration_ms": 47.9,
-      "direction": "neutral",
-      "confidence": 0.0
+      "duration_ms": 26.3,
+      "direction": "bearish",
+      "confidence": 0.1668
     },
     {
       "asset": "SOL",
       "market": "crypto",
       "status": "ok",
       "error": null,
-      "duration_ms": 24.4,
+      "duration_ms": 25.8,
       "direction": "bearish",
-      "confidence": 0.4001
+      "confidence": 0.4869
     },
     {
       "asset": "AAPL",
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 927.5,
+      "duration_ms": 790.1,
       "direction": "neutral",
       "confidence": 0.0
     },
@@ -47,7 +47,7 @@
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 67.0,
+      "duration_ms": 73.3,
       "direction": "bullish",
       "confidence": 0.4261
     },
@@ -56,7 +56,7 @@
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 97.0,
+      "duration_ms": 75.5,
       "direction": "neutral",
       "confidence": 0.0
     },
@@ -65,29 +65,33 @@
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 124.0,
+      "duration_ms": 53.5,
       "direction": "bearish",
       "confidence": 0.1458
     }
   ],
   "portfolio": {
     "signal_count": 7,
-    "directional_count": 4,
-    "net_bias": -0.3287,
+    "directional_count": 5,
+    "net_bias": -0.4836,
     "direction": "bearish",
     "conviction_weights": {
-      "BTC": 0.2343,
-      "SOL": 0.3152,
-      "MSFT": 0.3357,
-      "NVDA": 0.1149
+      "BTC": 0.2573,
+      "ETH": 0.1011,
+      "SOL": 0.2951,
+      "MSFT": 0.2582,
+      "NVDA": 0.0884
     },
-    "diversification_score": 0.719,
+    "diversification_score": 0.6275,
     "concentration_flags": [
-      "BTC and SOL point the same way with +0.88 return correlation \u2014 effectively one position"
+      "BTC and ETH point the same way with +0.88 return correlation \u2014 effectively one position",
+      "BTC and SOL point the same way with +0.87 return correlation \u2014 effectively one position",
+      "ETH and SOL point the same way with +0.87 return correlation \u2014 effectively one position"
     ],
     "correlations": {
       "assets": [
         "BTC",
+        "ETH",
         "MSFT",
         "NVDA",
         "SOL"
@@ -96,26 +100,37 @@
       "matrix": [
         [
           1.0,
-          -0.3226,
-          -0.1007,
-          0.878
+          0.8805,
+          0.0975,
+          0.3224,
+          0.8668
         ],
         [
-          -0.3226,
+          0.8805,
+          1.0,
+          -0.0256,
+          0.3136,
+          0.8697
+        ],
+        [
+          0.0975,
+          -0.0256,
           1.0,
           0.0627,
-          -0.2753
+          0.0462
         ],
         [
-          -0.1007,
+          0.3224,
+          0.3136,
           0.0627,
           1.0,
-          0.0465
+          0.2397
         ],
         [
-          0.878,
-          -0.2753,
-          0.0465,
+          0.8668,
+          0.8697,
+          0.0462,
+          0.2397,
           1.0
         ]
       ]
