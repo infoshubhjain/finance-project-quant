@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-08-05T07:49:40.488749+00:00",
-  "finished_at": "2026-08-05T07:49:42.078036+00:00",
+  "started_at": "2026-08-06T07:49:34.596989+00:00",
+  "finished_at": "2026-08-06T07:49:36.541269+00:00",
   "total": 7,
   "ok": 7,
   "errors": 0,
@@ -11,52 +11,52 @@
       "market": "crypto",
       "status": "ok",
       "error": null,
-      "duration_ms": 103.4,
-      "direction": "bearish",
-      "confidence": 0.4128
+      "duration_ms": 142.0,
+      "direction": "neutral",
+      "confidence": 0.0
     },
     {
       "asset": "ETH",
       "market": "crypto",
       "status": "ok",
       "error": null,
-      "duration_ms": 105.4,
-      "direction": "bearish",
-      "confidence": 0.3466
+      "duration_ms": 108.5,
+      "direction": "bullish",
+      "confidence": 0.0949
     },
     {
       "asset": "SOL",
       "market": "crypto",
       "status": "ok",
       "error": null,
-      "duration_ms": 106.4,
+      "duration_ms": 129.3,
       "direction": "bearish",
-      "confidence": 0.4675
+      "confidence": 0.4509
     },
     {
       "asset": "AAPL",
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 1080.2,
-      "direction": "neutral",
-      "confidence": 0.0
+      "duration_ms": 1132.3,
+      "direction": "bearish",
+      "confidence": 0.0499
     },
     {
       "asset": "MSFT",
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 75.9,
+      "duration_ms": 137.7,
       "direction": "bullish",
-      "confidence": 0.4493
+      "confidence": 0.3678
     },
     {
       "asset": "GOOGL",
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 52.8,
+      "duration_ms": 109.8,
       "direction": "neutral",
       "confidence": 0.0
     },
@@ -65,32 +65,28 @@
       "market": "us_equity",
       "status": "ok",
       "error": null,
-      "duration_ms": 64.4,
+      "duration_ms": 183.4,
       "direction": "bullish",
-      "confidence": 0.4426
+      "confidence": 0.5198
     }
   ],
   "portfolio": {
     "signal_count": 7,
     "directional_count": 5,
-    "net_bias": -0.1581,
-    "direction": "bearish",
+    "net_bias": 0.3247,
+    "direction": "bullish",
     "conviction_weights": {
-      "BTC": 0.1948,
-      "ETH": 0.1636,
-      "SOL": 0.2206,
-      "MSFT": 0.2121,
-      "NVDA": 0.2089
+      "ETH": 0.064,
+      "SOL": 0.304,
+      "AAPL": 0.0336,
+      "MSFT": 0.248,
+      "NVDA": 0.3504
     },
-    "diversification_score": 0.6426,
-    "concentration_flags": [
-      "BTC and ETH point the same way with +0.87 return correlation \u2014 effectively one position",
-      "BTC and SOL point the same way with +0.87 return correlation \u2014 effectively one position",
-      "ETH and SOL point the same way with +0.87 return correlation \u2014 effectively one position"
-    ],
+    "diversification_score": 0.7786,
+    "concentration_flags": [],
     "correlations": {
       "assets": [
-        "BTC",
+        "AAPL",
         "ETH",
         "MSFT",
         "NVDA",
@@ -100,37 +96,37 @@
       "matrix": [
         [
           1.0,
-          0.8734,
-          0.1594,
-          0.0139,
-          0.8733
+          0.2684,
+          0.0592,
+          -0.1989,
+          0.0831
         ],
         [
-          0.8734,
+          0.2684,
           1.0,
-          0.2065,
-          0.0182,
-          0.8657
+          0.2139,
+          0.0001,
+          0.8627
         ],
         [
-          0.1594,
-          0.2065,
+          0.0592,
+          0.2139,
           1.0,
-          0.1025,
-          0.3329
+          0.0916,
+          0.3372
         ],
         [
-          0.0139,
-          0.0182,
-          0.1025,
+          -0.1989,
+          0.0001,
+          0.0916,
           1.0,
-          0.1282
+          0.0988
         ],
         [
-          0.8733,
-          0.8657,
-          0.3329,
-          0.1282,
+          0.0831,
+          0.8627,
+          0.3372,
+          0.0988,
           1.0
         ]
       ]
